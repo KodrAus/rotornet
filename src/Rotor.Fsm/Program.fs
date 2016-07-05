@@ -1,6 +1,6 @@
 ﻿/// # `Rotor.Fsm`
 ///
-/// Base state machine implementation for asynchronous io
+/// Base state machine implementation for asynchronous io.
 
 //State: First Principals implementation
 
@@ -14,7 +14,6 @@
 //LibuvMachine(Libuv stuff, Option<Machine>)
 //When Option<Machine> is None, remove it
 //When not Machines.Any m.Machine.isSome, close the loop
-//Machines store their own state info, each op returns a new machine
 
 namespace Rotor
 
@@ -22,16 +21,24 @@ module Fsm =
     open System
     open Rotor.Libuv
 
-    type Response<'m> =
-    | Ok of 'm
+    /// The kind of response returned by an invokation of a state machine.
+    type Response =
+    | Ok
     | Done
     | Error of string
-    | Deadline of 'm * TimeSpan
+    | Deadline of TimeSpan
 
-    //NOTE: This is going to require an ugly type cast, maybe we should pass a state arg?
-    //This isn't really using F# effectively, we have the accessible state, but aren't using it on types. Needs help
+    /// The base definition of a state machine.
+    /// 
+    /// State machines are generic over the context (`'c`) and scope (`'s`) which are inhected by the loop.
     type IMachine<'c, 's> =
-        abstract member Create :    IMachine<'c, 's> * 'c * 's -> Response<IMachine<'c, 's>>
-        abstract member Ready :     IMachine<'c, 's> * 'c * 's -> Response<IMachine<'c, 's>>
-        abstract member Wakeup :    IMachine<'c, 's> * 'c * 's -> Response<IMachine<'c, 's>>
-        abstract member Timeout :   IMachine<'c, 's> * 'c * 's -> Response<IMachine<'c, 's>>
+        /// Called when a machine is created by the loop.
+        /// 
+        /// This is not something you'll call yourself, prefer using a constructor when pre-building machines.
+        abstract member Create :    'c -> 's -> Response
+        /// Called when the socket associated with this machine is ready to operate on.
+        abstract member Ready :     'c -> 's -> Response
+        /// Called when a notification has been sent to this machine.
+        abstract member Wakeup :    'c -> 's -> Response
+        /// Called when a timer has expired.
+        abstract member Timeout :   'c -> 's -> Response
