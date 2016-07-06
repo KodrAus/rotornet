@@ -67,42 +67,26 @@ let machine s =
 
 [<EntryPoint>]
 let main argv = 
-    //Build some machines and iterate over them
-    let machines = [ 
-        Counter(3) :> IMachine<unit, unit>; 
-        Nothing() :> IMachine<unit, unit>;
-        machine "1";
-        machine "2";
-        //An inline machine
-        { 
-            new IMachine<unit, unit> with
-                member this.Create c s =
-                    printfn "Inline"
-                    Ok
-                member this.Ready c s =
-                    Done
-                member this.Wakeup c s =
-                    Done
-                member this.Timeout c s =
-                    Done 
-        };
-    ]
+    let machines = 
+        [ 
+            Counter(3) :> IMachine<unit, unit>; 
+            Nothing() :> IMachine<unit, unit>;
+            machine "1";
+            machine "2";
+            //An inline machine
+            { 
+                new IMachine<unit, unit> with
+                    member this.Create c s =
+                        printfn "Inline"
+                        Ok
+                    member this.Ready c s =
+                        Done
+                    member this.Wakeup c s =
+                        Done
+                    member this.Timeout c s =
+                        Done 
+            };
+        ]
 
-    //Example of looping through some machines
-    machines 
-    |> List.iter(
-        fun m -> 
-            let created = m.Create () ()
-            match created with
-            | Ok -> 
-                    let rec run (m: IMachine<_,_>) =
-                        match (m.Wakeup () ()) with
-                        | Error e -> printfn "Error: %s" e
-                        | Done -> printfn "Done"
-                        | _ -> printfn "Still Working..."
-                               run m
-                    run m
-            | _ -> ()
-       )
-
-    0
+    let loop = Loop((), (), machines)
+    loop.Run()

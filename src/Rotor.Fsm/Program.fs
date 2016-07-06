@@ -42,3 +42,32 @@ module Fsm =
         abstract member Wakeup :    'c -> 's -> Response
         /// Called when a timer has expired.
         abstract member Timeout :   'c -> 's -> Response
+
+    //TODO: Implement the loop properly
+    type Loop<'c, 's>(ctx, scope, machines) =
+        let mutable context = ctx
+        let mutable scope = scope
+        let mutable machines: IMachine<'c, 's> list = machines
+
+        member this.Run () =
+            machines 
+            |> List.iter(
+                fun m -> 
+                    let created = m.Create context scope
+                    match created with
+                    | Ok -> let rec run (m: IMachine<_,_>) =
+                                match (m.Wakeup context scope) with
+                                | Error e -> printfn "Error: %s" e
+                                | Done -> printfn "Done"
+                                | _ -> printfn "Still Working..."
+                                       run m
+                            run m
+                    | _ -> ()
+               )
+            0
+
+    //TODO: Link IMachine to a libuv loop with socket events
+    //Sockets need:
+    // - Async to notify
+    // - Ability to register timeouts
+    // - Stream (or TCP) handle. These might be possible as base machine implementations
