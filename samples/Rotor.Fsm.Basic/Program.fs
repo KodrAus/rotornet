@@ -7,15 +7,15 @@ type Counter<'c, 's> (s) =
     let mutable state = s
 
     interface IMachine<'c, 's> with
-        member this.Create c s =
+        member this.create c s =
             printfn "Counter %i" state
             Ok
 
-        member this.Ready c s =
+        member this.ready c s =
             printfn "Ready"
             Deadline(TimeSpan.FromSeconds(1.0))
 
-        member this.Wakeup c s =
+        member this.wakeup c s =
             match state with
             | x when x < 0 ->   Error "state was less than 0"
 
@@ -25,20 +25,20 @@ type Counter<'c, 's> (s) =
                                 Deadline(TimeSpan.FromSeconds(1.0))
 
         //When a machine timeout occurs
-        member this.Timeout c s =
+        member this.timeout c s =
             Done
 
 //A machine with no state that does nothing
 type Nothing<'c, 's> (state) =
     interface IMachine<'c, 's> with
-        member this.Create c s =
+        member this.create c s =
             printfn "Nothing"
             Ok
-        member this.Ready c s =
+        member this.ready c s =
             Done
-        member this.Wakeup c s =
+        member this.wakeup c s =
             Done
-        member this.Timeout c s =
+        member this.timeout c s =
             Done
 
 //An anonymous machine
@@ -46,14 +46,14 @@ let machine s =
     let mutable state = Some(s)
     { 
         new IMachine<unit, unit> with
-            member this.Create c s =
+            member this.create c s =
                 printfn "Anonymous"
                 Ok
 
-            member this.Ready c s =
+            member this.ready c s =
                 Done
 
-            member this.Wakeup c s =
+            member this.wakeup c s =
                 match state with
                 | Some(s) ->    printfn "%s" s
                                 state <- None
@@ -61,7 +61,7 @@ let machine s =
 
                 | None ->       Done
 
-            member this.Timeout c s =
+            member this.timeout c s =
                 Done 
     }
 
@@ -76,17 +76,16 @@ let main argv =
             //An inline machine
             { 
                 new IMachine<unit, unit> with
-                    member this.Create c s =
+                    member this.create c s =
                         printfn "Inline"
                         Ok
-                    member this.Ready c s =
+                    member this.ready c s =
                         Done
-                    member this.Wakeup c s =
+                    member this.wakeup c s =
                         Done
-                    member this.Timeout c s =
+                    member this.timeout c s =
                         Done 
             };
         ]
 
-    let loop = Loop((), (), machines)
-    loop.Run()
+    (build () () machines) |> run
