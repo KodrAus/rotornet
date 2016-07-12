@@ -29,10 +29,23 @@ module Fsm =
     | Error of string
     | Deadline of TimeSpan
 
-    type Notifier(token: int64, queue: BlockingCollection<int64>, wakeup: UvAsyncHandle) =
+    type NotifyResponse =
+        | Ok
+        | Retry of RetryNotifier
+    and RetryNotifier(wakeup: UvAsyncHandle) =
+        member this.wakeup () =
+            try wakeup.Send()
+                NotifyResponse.Ok
+            with
+            | NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup))
+    and Notifier(token: int64, queue: BlockingCollection<int64>, wakeup: UvAsyncHandle) =
         member this.wakeup () =
             queue.TryAdd(token)
-            wakeup.Send()
+            try wakeup.Send()
+                NotifyResponse.Ok
+            with
+            | NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup))
+
 
 
     type Scope(token: int64, queue: BlockingCollection<int64>, wakeup: UvAsyncHandle) =

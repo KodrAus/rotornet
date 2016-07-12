@@ -10,7 +10,7 @@ type Counter<'c> (s) =
     interface IMachine<'c> with
         member this.create c s =
             printfn "Counter %i" state
-            Ok
+            Response.Ok
 
         member this.ready c s =
             printfn "Ready"
@@ -30,43 +30,6 @@ type Counter<'c> (s) =
         member this.timeout c s =
             Done
 
-//A machine with no state that does nothing
-type Nothing<'c> (state) =
-    interface IMachine<'c> with
-        member this.create c s =
-            printfn "Nothing"
-            Ok
-        member this.ready c s =
-            Done
-        member this.wakeup c s =
-            Done
-        member this.timeout c s =
-            Done
-
-//An anonymous machine
-let machine s =
-    let mutable state = Some(s)
-    { 
-        new IMachine<unit> with
-            member this.create c s =
-                printfn "Anonymous"
-                Ok
-
-            member this.ready c s =
-                Done
-
-            member this.wakeup c s =
-                match state with
-                | Some(s) ->    printfn "%s" s
-                                state <- None
-                                Deadline(TimeSpan.FromSeconds(1.0))
-
-                | None ->       Done
-
-            member this.timeout c s =
-                Done 
-    }
-
 [<EntryPoint>]
 let main argv = 
     let mutable notifier = None
@@ -83,15 +46,20 @@ let main argv =
 
     printfn "Running"
 
-    while notifier.IsNone do
-        ()
-
-    //TODO: Swallow exception in waking up incomplete handle
-    Thread.Sleep(5000)
+    while notifier.IsNone do ()
 
     printfn "Waking up"
 
-    notifier.Value.wakeup()
+    let rec notify resp =
+        match resp with
+        | NotifyResponse.Ok -> ()
+        | NotifyResponse.Retry(retry) -> 
+            Thread.Sleep(500)
+            printfn "Notification failed, retrying"
+
+            notify (retry.wakeup())
+            
+    notify (notifier.Value.wakeup())
 
     printfn "Woken up"
 
