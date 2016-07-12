@@ -34,8 +34,9 @@ type Counter<'c> (s) =
 let main argv = 
     let mutable notifier = None
 
+    //Spin up an io loop in a TPL thread
     let handle = Async.StartAsTask <| async {
-        let l = (loop ()) 
+        let l = (loop ())
         l.addMachine (
             fun scope -> 
                 notifier <- Some(scope.notifier())
@@ -44,20 +45,23 @@ let main argv =
         l |> run
     }
 
-    printfn "Running"
+    printfn "Starting"
 
+    //Dodgy spin  to wait until the notifier has a value
     while notifier.IsNone do ()
 
     printfn "Waking up"
 
+    //Keep trying to call the wakeup handle until it succeeds 
+    //If the loop was just built then the handle will fail
     let rec notify resp =
         match resp with
-        | NotifyResponse.Ok -> ()
-        | NotifyResponse.Retry(retry) -> 
-            Thread.Sleep(500)
-            printfn "Notification failed, retrying"
+        | NotifyResponse.Ok ->  ()
 
-            notify (retry.wakeup())
+        | Retry(retry) ->       Thread.Sleep(500)
+                                printfn "Notification failed, retrying"
+
+                                notify (retry.wakeup())
             
     notify (notifier.Value.wakeup())
 

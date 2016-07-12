@@ -6,15 +6,6 @@
 
 //TODO: Use KestrelThread as a base for building up this layer
 
-//Need a loop construct that takes a sequence of machines, registers libuv handles for them and executes certain events
-//Need an IMachine construct that defines the base operations available on a machine, and how they're linked to libuv events
-//Need to close the loop when there are no active machines
-//Need a Response enum with the fo
-
-//LibuvMachine(Libuv stuff, Option<Machine>)
-//When Option<Machine> is None, remove it
-//When not Machines.Any m.Machine.isSome, close the loop
-
 namespace Rotor
 
 module Fsm =
@@ -66,6 +57,8 @@ module Fsm =
         /// Called when a timer has expired.
         abstract member timeout :   'c -> Scope -> Response
 
+    //TODO: Work out best abstraction for streams already provided by libuv
+
     type Loop<'c>(ctx) =
         let libuv = Binding()
         let loop = new UvLoopHandle()
@@ -101,7 +94,7 @@ module Fsm =
                             fun (token: int64) ->
                                 printfn "Wakeup setup"
                                 match (Map.tryFind token machines) with
-                                //TODO: Handle wakeup properly
+                                //TODO: Handle response properly
                                 | Some(m) -> 
                                     let scope = Scope(token, wakeupQueue, wakeup)
                                     (m.wakeup context scope) |> ignore
