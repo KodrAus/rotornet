@@ -37,8 +37,6 @@ module Fsm =
             with
             | NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup))
 
-
-
     type Scope(token: int64, queue: BlockingCollection<int64>, wakeup: UvAsyncHandle) =
         member this.notifier() = Notifier(token, queue, wakeup)
 
