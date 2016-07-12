@@ -19,6 +19,7 @@ namespace Rotor
 
 module Fsm =
     open System
+    open System.Collections.Concurrent
     open Rotor.Libuv.Networking
 
     /// The kind of response returned by an invokation of a state machine.
@@ -28,67 +29,79 @@ module Fsm =
     | Error of string
     | Deadline of TimeSpan
 
+    type Notifier(token: int64, queue: BlockingCollection<int64>) =
+        member this.wakeup () =
+            queue.TryAdd(token)
+
+    type Scope(token: int64, queue: BlockingCollection<int64>) =
+        member this.notifier() = Notifier(token, queue)
+
     /// The base definition of a state machine.
     /// 
-    /// State machines are generic over the context (`'c`) and scope (`'s`) which are inhected by the loop.
-    type IMachine<'c, 's> =
+    /// State machines are generic over the context (`'c`) and scope which are inhected by the loop.
+    type IMachine<'c> =
         /// Called when a machine is created by the loop.
         /// 
         /// This is not something you'll call yourself, prefer using a constructor when pre-building machines.
-        abstract member create :    'c -> 's -> Response
+        abstract member create :    'c -> Scope -> Response
         /// Called when the socket associated with this machine is ready to operate on.
-        abstract member ready :     'c -> 's -> Response
+        abstract member ready :     'c -> Scope -> Response
         /// Called when a notification has been sent to this machine.
-        abstract member wakeup :    'c -> 's -> Response
+        abstract member wakeup :    'c -> Scope -> Response
         /// Called when a timer has expired.
-        abstract member timeout :   'c -> 's -> Response
+        abstract member timeout :   'c -> Scope -> Response
 
-    //TODO: Implement the loop properly
-    type Loop<'c, 's>(ctx, scope, machines) =
-        /// A libuv binding and loop construct.
+    type Loop<'c>(ctx) =
         let libuv = Binding()
+        let loop = new UvLoopHandle()
+        let wakeup = new UvAsyncHandle()
+        let wakeupQueue = new BlockingCollection<int64>()
 
-        /// A shared context that all machines receive. It's mutable because each machine receives it one at a time.
-        let mutable context = ctx
-        /// A shared scope that lets machines interact with the underlying loop construc.
-        let mutable scope = scope
+        /// A shared context that all machines receive. It's safely mutable because each machine receives it one at a time.
+        let mutable context: 'c = ctx
         /// A list of machines that are bound to socket events.
-        let mutable machines: IMachine<'c, 's> list = machines
+        let mutable machines: Map<int64, IMachine<'c>> = Map.empty
+
+        member this.addMachine (f: Scope -> IMachine<'c>) =
+            let token = int64 machines.Count
+            let scope = Scope(token, wakeupQueue)
+            let machine = f scope
+
+            machines <- Map.add token machine machines
 
         member this.run () =
-            use loop = new UvLoopHandle()
             loop.Init(libuv)
 
-            machines 
-            |> List.iter(
-                fun m -> 
-                    let created = m.create context scope
-                    match created with
-                    | Ok -> let rec run (m: IMachine<_,_>) =
-                                match (m.wakeup context scope) with
-                                | Error e -> printfn "Error: %s" e
-                                | Done -> printfn "Done"
-                                | _ -> printfn "Still Working..."
-                                       run m
-                            run m
-                    | _ -> ()
-               )
+            wakeup.Init(
+                loop, 
+                System.Action(
+                    fun () -> 
+                        wakeupQueue.GetConsumingEnumerable()
+                        |> Seq.cast<int64>
+                        |> Seq.iter(
+                            fun (token: int64) ->
+                                match (Map.tryFind token machines) with
+                                //TODO: Handle wakeup properly
+                                | Some(m) -> 
+                                    let scope = Scope(token, wakeupQueue)
+                                    (m.wakeup context scope) |> ignore
+                                | _ -> ()
+                        )
+                ), 
+                System.Action<_, _>(fun p1 p2 -> ())
+            ) |> ignore
 
-            0
+            match machines.Count with
+            | 0 -> 0
+            | _ -> loop.Run()
 
     /// Build a loop with the given arguments.
-    let build c s m = Loop(c, s, m)
+    let loop c = Loop(c)
 
     /// Run a constructed loop.
     /// 
     /// This will block the calling thread until either the loop is stopped or all machines return a
     /// state of either `Done` or `Error`.
-    let run (l: Loop<'c, 's>) = l.run()
+    let run (l: Loop<'c>) = l.run()
 
-    //TODO: Link IMachine to a libuv loop with socket events
-    //Sockets need:
-    // - Async to notify
-    // - Ability to register timeouts
-    // - Stream (or TCP) handle. These might be possible as base machine implementations
-
-    //Also need to figure out how to test this
+    let machine (l: Loop<'c>) f = l.addMachine(f)

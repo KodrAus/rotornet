@@ -2,11 +2,11 @@ open System
 open Rotor.Fsm
 
 //A machine with a mutable internal state
-type Counter<'c, 's> (s) =
+type Counter<'c> (s) =
     //Our mutable state
     let mutable state = s
 
-    interface IMachine<'c, 's> with
+    interface IMachine<'c> with
         member this.create c s =
             printfn "Counter %i" state
             Ok
@@ -29,8 +29,8 @@ type Counter<'c, 's> (s) =
             Done
 
 //A machine with no state that does nothing
-type Nothing<'c, 's> (state) =
-    interface IMachine<'c, 's> with
+type Nothing<'c> (state) =
+    interface IMachine<'c> with
         member this.create c s =
             printfn "Nothing"
             Ok
@@ -45,7 +45,7 @@ type Nothing<'c, 's> (state) =
 let machine s =
     let mutable state = Some(s)
     { 
-        new IMachine<unit, unit> with
+        new IMachine<unit> with
             member this.create c s =
                 printfn "Anonymous"
                 Ok
@@ -69,13 +69,13 @@ let machine s =
 let main argv = 
     let machines = 
         [ 
-            Counter(3) :> IMachine<unit, unit>; 
-            Nothing() :> IMachine<unit, unit>;
+            Counter(3) :> IMachine<unit>; 
+            Nothing() :> IMachine<unit>;
             machine "1";
             machine "2";
             //An inline machine
             { 
-                new IMachine<unit, unit> with
+                new IMachine<unit> with
                     member this.create c s =
                         printfn "Inline"
                         Ok
@@ -88,4 +88,4 @@ let main argv =
             };
         ]
 
-    (build () () machines) |> run
+    (loop ()) |> run

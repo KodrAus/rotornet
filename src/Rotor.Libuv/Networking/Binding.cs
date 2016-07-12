@@ -506,6 +506,7 @@ namespace Rotor.Libuv.Networking
             GETNAMEINFO,
         }
 
+        //TODO: Trim down unused bindings
         private static class NativeMethods
         {
             [DllImport("libuv", CallingConvention = CallingConvention.Cdecl)]
