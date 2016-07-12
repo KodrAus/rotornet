@@ -90,3 +90,5 @@ module Fsm =
     // - Async to notify
     // - Ability to register timeouts
     // - Stream (or TCP) handle. These might be possible as base machine implementations
+
+    //Also need to figure out how to test this
