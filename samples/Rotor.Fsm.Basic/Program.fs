@@ -1,4 +1,5 @@
 open System
+open System.Threading
 open Rotor.Fsm
 
 //A machine with a mutable internal state
@@ -21,7 +22,8 @@ type Counter<'c> (s) =
 
             | 0 ->              Done
 
-            | x ->              state <- state - 1
+            | x ->              printfn "Ping"
+                                state <- state - 1
                                 Deadline(TimeSpan.FromSeconds(1.0))
 
         //When a machine timeout occurs
@@ -67,25 +69,31 @@ let machine s =
 
 [<EntryPoint>]
 let main argv = 
-    let machines = 
-        [ 
-            Counter(3) :> IMachine<unit>; 
-            Nothing() :> IMachine<unit>;
-            machine "1";
-            machine "2";
-            //An inline machine
-            { 
-                new IMachine<unit> with
-                    member this.create c s =
-                        printfn "Inline"
-                        Ok
-                    member this.ready c s =
-                        Done
-                    member this.wakeup c s =
-                        Done
-                    member this.timeout c s =
-                        Done 
-            };
-        ]
+    let mutable notifier = None
 
-    (loop ()) |> run
+    let handle = Async.StartAsTask <| async {
+        let l = (loop ()) 
+        l.addMachine (
+            fun scope -> 
+                notifier <- Some(scope.notifier())
+                (Counter(3) :> IMachine<unit>)
+        )
+        l |> run
+    }
+
+    printfn "Running"
+
+    while notifier.IsNone do
+        ()
+
+    //TODO: Swallow exception in waking up incomplete handle
+    Thread.Sleep(5000)
+
+    printfn "Waking up"
+
+    notifier.Value.wakeup()
+
+    printfn "Woken up"
+
+    handle.Wait()
+    0

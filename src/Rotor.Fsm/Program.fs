@@ -29,12 +29,14 @@ module Fsm =
     | Error of string
     | Deadline of TimeSpan
 
-    type Notifier(token: int64, queue: BlockingCollection<int64>) =
+    type Notifier(token: int64, queue: BlockingCollection<int64>, wakeup: UvAsyncHandle) =
         member this.wakeup () =
             queue.TryAdd(token)
+            wakeup.Send()
 
-    type Scope(token: int64, queue: BlockingCollection<int64>) =
-        member this.notifier() = Notifier(token, queue)
+
+    type Scope(token: int64, queue: BlockingCollection<int64>, wakeup: UvAsyncHandle) =
+        member this.notifier() = Notifier(token, queue, wakeup)
 
     /// The base definition of a state machine.
     /// 
@@ -54,6 +56,8 @@ module Fsm =
     type Loop<'c>(ctx) =
         let libuv = Binding()
         let loop = new UvLoopHandle()
+
+        //TODO: Capture this in struct
         let wakeup = new UvAsyncHandle()
         let wakeupQueue = new BlockingCollection<int64>()
 
@@ -63,8 +67,10 @@ module Fsm =
         let mutable machines: Map<int64, IMachine<'c>> = Map.empty
 
         member this.addMachine (f: Scope -> IMachine<'c>) =
+            printfn "Adding machine"
+
             let token = int64 machines.Count
-            let scope = Scope(token, wakeupQueue)
+            let scope = Scope(token, wakeupQueue, wakeup)
             let machine = f scope
 
             machines <- Map.add token machine machines
@@ -80,10 +86,11 @@ module Fsm =
                         |> Seq.cast<int64>
                         |> Seq.iter(
                             fun (token: int64) ->
+                                printfn "Wakeup setup"
                                 match (Map.tryFind token machines) with
                                 //TODO: Handle wakeup properly
                                 | Some(m) -> 
-                                    let scope = Scope(token, wakeupQueue)
+                                    let scope = Scope(token, wakeupQueue, wakeup)
                                     (m.wakeup context scope) |> ignore
                                 | _ -> ()
                         )
@@ -104,4 +111,6 @@ module Fsm =
     /// state of either `Done` or `Error`.
     let run (l: Loop<'c>) = l.run()
 
-    let machine (l: Loop<'c>) f = l.addMachine(f)
+    let machine f (l: Loop<'c>) = 
+        l.addMachine(f)
+        l
