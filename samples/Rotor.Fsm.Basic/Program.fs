@@ -24,7 +24,7 @@ type Counter<'c> (s) =
 
             | x ->              printfn "Ping"
                                 state <- state - 1
-                                Deadline(TimeSpan.FromSeconds(1.0))
+                                Response.Done
 
         //When a machine timeout occurs
         member this.timeout c s =
