@@ -21,25 +21,34 @@ module Fsm =
     | Error of string
     | Deadline of TimeSpan
 
-    type Notifier(token: int64, queue: ConcurrentQueue<int64>, wakeup: UvAsyncHandle) =
-        member this.wakeup () =
-            queue.Enqueue(token)
-            try wakeup.Send()
-                NotifyResponse.Ok
-            with | NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup))
+    type WakeupHandle(handle: UvAsyncHandle, queue: ConcurrentQueue<int64>) =
+        member this.handle = handle
+        member this.queue = queue
 
-    and RetryNotifier(wakeup: UvAsyncHandle) =
+        interface IDisposable with
+            member this.Dispose() =
+                this.handle.Unreference()
+                this.handle.Dispose()
+
+    type Notifier(token: int64, wakeup: WakeupHandle) =
         member this.wakeup () =
-            try wakeup.Send()
+            wakeup.queue.Enqueue(token)
+            try wakeup.handle.Send()
                 NotifyResponse.Ok
-            with | NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup))
+            with | :? NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup.handle))
+
+    and RetryNotifier(handle: UvAsyncHandle) =
+        member this.wakeup () =
+            try handle.Send()
+                NotifyResponse.Ok
+            with | :? NullReferenceException -> NotifyResponse.Retry(RetryNotifier(handle))
 
     and NotifyResponse =
         | Ok
         | Retry of RetryNotifier
 
-    type Scope(token: int64, queue: ConcurrentQueue<int64>, wakeup: UvAsyncHandle) =
-        member this.notifier() = Notifier(token, queue, wakeup)
+    type Scope(token: int64, wakeup: WakeupHandle) =
+        member this.notifier() = Notifier(token, wakeup)
 
     /// The base definition of a state machine.
     /// 
@@ -57,29 +66,27 @@ module Fsm =
         abstract member timeout :   'c -> Scope -> Response
 
     type private LoopState =
-    | Idle of UvLoopHandle
-    | Running of UvLoopHandle
+    | Idle of UvLoopHandle * WakeupHandle
+    | Running of UvLoopHandle * WakeupHandle
+    | Closed
 
     type Loop<'c>(ctx) =
         let libuv = Binding()
-        let mutable loop = Idle(new UvLoopHandle())
-
-        //TODO: Capture this in struct with appropriate lifetime
-        let wakeup = new UvAsyncHandle()
-        let wakeupQueue = new ConcurrentQueue<int64>()
+        let mutable loop = Idle(new UvLoopHandle(), new WakeupHandle(new UvAsyncHandle(), new ConcurrentQueue<int64>()))
 
         let mutable context: 'c = ctx
         let mutable machines: Map<int64, IMachine<'c>> = Map.empty
 
         let stop () =
             match loop with
-            | Idle(_) ->    ()
+            | Idle(_, _) ->         ()
 
-            | Running(l) -> wakeup.Unreference()
+            | Closed ->             ()
 
-                            l.Stop()
-                            
-                            loop <- LoopState.Idle(new UvLoopHandle())
+            | Running(l, wakeup) -> (wakeup :> IDisposable).Dispose()
+                                    l.Stop()
+                                    
+                                    loop <- LoopState.Closed
 
         let remove token = 
             machines <- Map.remove token machines
@@ -89,57 +96,68 @@ module Fsm =
             | _ ->  ()
 
         let runOnce token f =
-            let scope = Scope(token, wakeupQueue, wakeup)
-            let res = try f context scope with | e -> Error(e.Message)
+            match loop with
+            | Closed -> ()
+            | Idle(_, wakeup) | Running(_, wakeup) ->
+                let scope = Scope(token, wakeup)
+                let res = try f context scope with | e -> Error(e.Message)
 
-            match res with
-            | Done ->           remove token
+                match res with
+                | Done ->           remove token
 
-            | Error(e) ->       printfn "Error running %i: '%s'" token e
-                                remove token
+                | Error(e) ->       printfn "Error running %i: '%s'" token e
+                                    remove token
 
-            | Deadline(t) ->    raise (NotImplementedException("Deadlines are not implemented"))
+                | Deadline(t) ->    raise (NotImplementedException("Deadlines are not implemented"))
 
-            | Response.Ok ->    ()
+                | Response.Ok ->    ()
 
         member this.addMachine (f: Scope -> IMachine<'c>) =
-            let token = int64 machines.Count
-            let scope = Scope(token, wakeupQueue, wakeup)
-            let machine = f scope
+            match loop with
+            | Closed ->             raise (NotImplementedException("Adding machines to dirty loops is not implemented"))
 
-            machines <- Map.add token machine machines
+            | Running(_, _) ->      ()
+
+            | Idle(_, wakeup) ->    let token = int64 machines.Count
+                                    let scope = Scope(token, wakeup)
+                                    let machine = f scope
+
+                                    machines <- Map.add token machine machines
 
         member this.run () =
             match loop with
-            | Running(_) -> 0
+            | Closed ->         raise (NotImplementedException("Restarting dirty loops is not implemented"))
 
-            | Idle(l) ->    l.Init(libuv)
-                            loop <- LoopState.Running(l)
-                            
-                            machines |> Map.iter(fun token machine -> runOnce token machine.create)
+            | Running(_, _) ->  0
 
-                            wakeup.Init(
-                                l, 
-                                System.Action(
-                                    fun () -> 
-                                        let rec handle () =
-                                            match wakeupQueue.TryDequeue() with
-                                            | true, token ->    match (Map.tryFind token machines) with
-                                                                | Some(machine) -> runOnce token machine.wakeup
-                                                                | _ -> ()
+            | Idle(l, w) ->     loop <- LoopState.Running(l, w)
 
-                                                                handle()
+                                l.Init(libuv)
+                                
+                                machines |> Map.iter(fun token machine -> runOnce token machine.create)
 
-                                            | false, _ ->       ()
+                                w.handle.Init(
+                                    l, 
+                                    System.Action(
+                                        fun () -> 
+                                            let rec handle () =
+                                                match w.queue.TryDequeue() with
+                                                | true, token ->    match (Map.tryFind token machines) with
+                                                                    | Some(machine) -> runOnce token machine.wakeup
+                                                                    | _ -> ()
 
-                                        handle()
-                                ), 
-                                null
-                            ) |> ignore
+                                                                    handle()
 
-                            match machines.Count with
-                            | 0 -> 0
-                            | _ -> l.Run()
+                                                | false, _ ->       ()
+
+                                            handle()
+                                    ), 
+                                    null
+                                ) |> ignore
+
+                                match machines.Count with
+                                | 0 -> 0
+                                | _ -> l.Run()
 
     /// Build a loop with the given arguments.
     let loop c = Loop(c)

@@ -34,16 +34,14 @@ let main argv =
     let mutable notifier = None
 
     //Spin up an io loop in a thread
-    let handle = new Thread(
-        fun (o: Object) ->
-            let l = (loop ())
-            l.addMachine (
-                fun scope -> 
-                    notifier <- Some(scope.notifier())
-                    (Counter(3) :> IMachine<unit>)
-            )
-            l |> run
-    )
+    let handle = new Thread(fun (o: Object) ->
+                                let l = (loop ())
+                                l.addMachine (
+                                    fun scope -> 
+                                        notifier <- Some(scope.notifier())
+                                        (Counter(3) :> IMachine<unit>)
+                                )
+                                l |> run)
 
     handle.Start()
 
