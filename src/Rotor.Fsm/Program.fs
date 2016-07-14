@@ -56,7 +56,7 @@ module Fsm =
         /// Called when a timer has expired.
         abstract member timeout :   'c -> Scope -> Response
 
-    type LoopState =
+    type private LoopState =
     | Idle of UvLoopHandle
     | Running of UvLoopHandle
 
