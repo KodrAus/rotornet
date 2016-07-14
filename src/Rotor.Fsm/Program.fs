@@ -1,4 +1,4 @@
-﻿/// # `Rotor.Fsm`
+/// # `Rotor.Fsm`
 ///
 /// Base state machine implementation for asynchronous io.
 
@@ -21,25 +21,24 @@ module Fsm =
     | Error of string
     | Deadline of TimeSpan
 
-    type Notifier(token: int64, queue: BlockingCollection<int64>, wakeup: UvAsyncHandle) =
+    type Notifier(token: int64, queue: ConcurrentQueue<int64>, wakeup: UvAsyncHandle) =
         member this.wakeup () =
-            if queue.TryAdd(token) then 
-                try wakeup.Send()
-                    NotifyResponse.Ok
-                with
-                | NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup))
-            else raise (NotImplementedException("Failed TryAdd not implemented"))
+            queue.Enqueue(token)
+            try wakeup.Send()
+                NotifyResponse.Ok
+            with | NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup))
+
     and RetryNotifier(wakeup: UvAsyncHandle) =
         member this.wakeup () =
             try wakeup.Send()
                 NotifyResponse.Ok
-            with
-            | NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup))
+            with | NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup))
+
     and NotifyResponse =
         | Ok
         | Retry of RetryNotifier
 
-    type Scope(token: int64, queue: BlockingCollection<int64>, wakeup: UvAsyncHandle) =
+    type Scope(token: int64, queue: ConcurrentQueue<int64>, wakeup: UvAsyncHandle) =
         member this.notifier() = Notifier(token, queue, wakeup)
 
     /// The base definition of a state machine.
@@ -66,41 +65,36 @@ module Fsm =
         let libuv = Binding()
         let mutable loop = Idle(new UvLoopHandle())
 
-        //TODO: Capture this in struct
+        //TODO: Capture this in struct with appropriate lifetime
         let wakeup = new UvAsyncHandle()
-        let wakeupQueue = new BlockingCollection<int64>()
+        let wakeupQueue = new ConcurrentQueue<int64>()
 
-        /// A shared context that all machines receive. It's safely mutable because each machine receives it one at a time.
         let mutable context: 'c = ctx
-        /// A list of machines that are bound to socket events.
         let mutable machines: Map<int64, IMachine<'c>> = Map.empty
 
         let stop () =
             match loop with
             | Idle(_) ->    ()
 
-            //TODO: This needs to be able to join the thread
-            | Running(l) -> printfn "Stopping on thread %i" Thread.CurrentThread.ManagedThreadId
-                            l.Stop()
-                            loop <- LoopState.Idle(new UvLoopHandle())
-                            printfn "Stopped"
+            | Running(l) -> wakeup.Unreference()
 
-        /// Remove a machine from the list and check for any active machines
+                            l.Stop()
+                            
+                            loop <- LoopState.Idle(new UvLoopHandle())
+
         let remove token = 
             machines <- Map.remove token machines
 
             match machines.Count with
-            | 0 ->  printfn "Stopping loop"
-                    stop()
-            | _ ->  printfn "Life goes on"
+            | 0 ->  stop()
+            | _ ->  ()
 
         let runOnce token f =
             let scope = Scope(token, wakeupQueue, wakeup)
             let res = try f context scope with | e -> Error(e.Message)
 
             match res with
-            | Done ->           printfn "Done"
-                                remove token
+            | Done ->           remove token
 
             | Error(e) ->       printfn "Error running %i: '%s'" token e
                                 remove token
@@ -110,8 +104,6 @@ module Fsm =
             | Response.Ok ->    ()
 
         member this.addMachine (f: Scope -> IMachine<'c>) =
-            printfn "Adding machine"
-
             let token = int64 machines.Count
             let scope = Scope(token, wakeupQueue, wakeup)
             let machine = f scope
@@ -120,33 +112,30 @@ module Fsm =
 
         member this.run () =
             match loop with
-            | Running(_) -> printfn "Loop is already running"
-                            0
+            | Running(_) -> 0
 
             | Idle(l) ->    l.Init(libuv)
                             loop <- LoopState.Running(l)
                             
-                            //Create base machines
-                            machines 
-                            |> Map.iter(fun token machine -> runOnce token machine.create)
+                            machines |> Map.iter(fun token machine -> runOnce token machine.create)
 
-                            //Initialise the notifier
                             wakeup.Init(
                                 l, 
                                 System.Action(
                                     fun () -> 
-                                        wakeupQueue.GetConsumingEnumerable()
-                                        |> Seq.cast<int64>
-                                        |> Seq.iter(
-                                            fun token ->
-                                                printfn "Wakeup started"
-                                                match (Map.tryFind token machines) with
-                                                | Some(machine) -> runOnce token machine.wakeup
-                                                | _ -> ()
-                                                printfn "Wakeup finished"
-                                        )
+                                        let rec handle () =
+                                            match wakeupQueue.TryDequeue() with
+                                            | true, token ->    match (Map.tryFind token machines) with
+                                                                | Some(machine) -> runOnce token machine.wakeup
+                                                                | _ -> ()
+
+                                                                handle()
+
+                                            | false, _ ->       ()
+
+                                        handle()
                                 ), 
-                                System.Action<_, _>(fun p1 p2 -> ())
+                                null
                             ) |> ignore
 
                             match machines.Count with
@@ -160,11 +149,4 @@ module Fsm =
     /// 
     /// This will block the calling thread until either the loop is stopped or all machines return a
     /// state of either `Done` or `Error`.
-    let run (l: Loop<'c>) =
-        printfn "Running on thread %i" Thread.CurrentThread.ManagedThreadId
-        l.run()
-        printfn "Finished running"
-
-    let machine f (l: Loop<'c>) = 
-        l.addMachine(f)
-        l
+    let run (l: Loop<'c>) = l.run() |> ignore

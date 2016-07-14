@@ -146,6 +146,12 @@ namespace Rotor.Libuv.Networking
             _uv_ref(handle);
         }
 
+        public void _ref(UvHandle handle)
+        {
+            handle.Validate();
+            _uv_ref(handle);
+        }
+
         protected Action<UvHandle> _uv_unref;
         public void unref(UvHandle handle)
         {

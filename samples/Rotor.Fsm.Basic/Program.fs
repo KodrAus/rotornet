@@ -9,12 +9,11 @@ type Counter<'c> (s) =
 
     interface IMachine<'c> with
         member this.create c s =
-            printfn "Counter %i" state
+            printfn "Created with counter %i" state
             Response.Ok
 
         member this.ready c s =
-            printfn "Ready"
-            Deadline(TimeSpan.FromSeconds(1.0))
+            Response.Ok
 
         member this.wakeup c s =
             match state with
@@ -22,9 +21,9 @@ type Counter<'c> (s) =
 
             | 0 ->              Done
 
-            | x ->              printfn "Ping"
+            | x ->              printfn "Hello %i" x
                                 state <- state - 1
-                                Response.Done
+                                Response.Ok
 
         //When a machine timeout occurs
         member this.timeout c s =
@@ -34,23 +33,22 @@ type Counter<'c> (s) =
 let main argv = 
     let mutable notifier = None
 
-    //Spin up an io loop in a TPL thread
-    let handle = Async.StartAsTask <| async {
-        let l = (loop ())
-        l.addMachine (
-            fun scope -> 
-                notifier <- Some(scope.notifier())
-                (Counter(3) :> IMachine<unit>)
-        )
-        l |> run
-    }
+    //Spin up an io loop in a thread
+    let handle = new Thread(
+        fun (o: Object) ->
+            let l = (loop ())
+            l.addMachine (
+                fun scope -> 
+                    notifier <- Some(scope.notifier())
+                    (Counter(3) :> IMachine<unit>)
+            )
+            l |> run
+    )
 
-    printfn "Starting"
+    handle.Start()
 
-    //Dodgy spin  to wait until the notifier has a value
+    //Dodgy spin to wait until the notifier has a value
     while notifier.IsNone do ()
-
-    printfn "Waking up"
 
     //Keep trying to call the wakeup handle until it succeeds 
     //If the loop was just built then the handle will fail
@@ -59,13 +57,13 @@ let main argv =
         | NotifyResponse.Ok ->  ()
 
         | Retry(retry) ->       Thread.Sleep(500)
-                                printfn "Notification failed, retrying"
-
                                 notify (retry.wakeup())
             
+    //Send a few notifications to the loop
+    notify (notifier.Value.wakeup())
+    notify (notifier.Value.wakeup())
+    notify (notifier.Value.wakeup())
     notify (notifier.Value.wakeup())
 
-    printfn "Woken up"
-
-    handle.Wait()
+    handle.Join()
     0
