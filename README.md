@@ -1,6 +1,6 @@
 # `rotornet`
 
-Messing around with the `libuv` bindings hidden away in `Kestrel`.
+Messing around with the `libuv` bindings hidden away in [`kestrel`](https://github.com/aspnet/KestrelHttpServer).
 
 This is a hobby project to build a state-machine based io abstraction for .NET based off the Rust library [`rotor`](https://github.com/tailhook/rotor).
 The idea is to use F# discriminated unions to make it easy to write stateful io handlers without using the TPL.
@@ -19,4 +19,6 @@ How this memory is mutated is a question that needs to be explored.
 Where possible, we'll want to avoid heap allocations within the framework itself.
 
 F# should be used down to the lowest layer possible.
-Rebuilding the libuv binding in F# should make it easy to unit test the functionality.
+One possible point of contention could be executing many small managed callbacks from unmanaged code.
+For wakeups, we can get around this by handling all wakeup requests in a single callback, but socket
+events are possibly a different story.
