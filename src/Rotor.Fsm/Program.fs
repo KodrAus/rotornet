@@ -10,6 +10,7 @@ namespace Rotor
 
 module Fsm =
     open System
+    open System.Threading
     open System.Collections.Concurrent
     open Rotor.Libuv.Networking
 
@@ -74,13 +75,14 @@ module Fsm =
         /// A list of machines that are bound to socket events.
         let mutable machines: Map<int64, IMachine<'c>> = Map.empty
 
-        let stop =
+        let stop () =
             match loop with
             | Idle(_) ->    ()
 
-            | Running(l) -> wakeup.Dispose()
+            //TODO: This needs to be able to join the thread
+            | Running(l) -> printfn "Stopping on thread %i" Thread.CurrentThread.ManagedThreadId
                             l.Stop()
-                            loop <- LoopState.Idle(l)
+                            loop <- LoopState.Idle(new UvLoopHandle())
                             printfn "Stopped"
 
         /// Remove a machine from the list and check for any active machines
@@ -89,7 +91,7 @@ module Fsm =
 
             match machines.Count with
             | 0 ->  printfn "Stopping loop"
-                    stop
+                    stop()
             | _ ->  printfn "Life goes on"
 
         let runOnce token f =
@@ -137,10 +139,11 @@ module Fsm =
                                         |> Seq.cast<int64>
                                         |> Seq.iter(
                                             fun token ->
-                                                printfn "Wakeup setup"
+                                                printfn "Wakeup started"
                                                 match (Map.tryFind token machines) with
                                                 | Some(machine) -> runOnce token machine.wakeup
                                                 | _ -> ()
+                                                printfn "Wakeup finished"
                                         )
                                 ), 
                                 System.Action<_, _>(fun p1 p2 -> ())
@@ -157,7 +160,10 @@ module Fsm =
     /// 
     /// This will block the calling thread until either the loop is stopped or all machines return a
     /// state of either `Done` or `Error`.
-    let run (l: Loop<'c>) = l.run()
+    let run (l: Loop<'c>) =
+        printfn "Running on thread %i" Thread.CurrentThread.ManagedThreadId
+        l.run()
+        printfn "Finished running"
 
     let machine f (l: Loop<'c>) = 
         l.addMachine(f)
