@@ -21,6 +21,8 @@ module Fsm =
     | Error of string
     | Deadline of TimeSpan
 
+    /// A wakeup handle containing a message queue and `UvAsyncHandle` for waking up
+    /// the loop without blocking.
     type WakeupHandle(handle: UvAsyncHandle, queue: ConcurrentQueue<int64>) =
         member this.handle = handle
         member this.queue = queue
@@ -30,6 +32,9 @@ module Fsm =
                 this.handle.Unreference()
                 this.handle.Dispose()
 
+    /// A way for objects outside of the loop to wakeup a state machine.
+    /// 
+    /// The `Notifier` is specific to a single machine.
     type Notifier(token: int64, wakeup: WakeupHandle) =
         member this.wakeup () =
             wakeup.queue.Enqueue(token)
@@ -37,12 +42,18 @@ module Fsm =
                 NotifyResponse.Ok
             with | :? NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup.handle))
 
+    /// A way to retry sending a ping to a machine.
+    /// 
+    /// This does not queue the message subsequent times.
     and RetryNotifier(handle: UvAsyncHandle) =
         member this.wakeup () =
             try handle.Send()
                 NotifyResponse.Ok
             with | :? NullReferenceException -> NotifyResponse.Retry(RetryNotifier(handle))
 
+    /// The response from calling `wakeup` on a `Notifier`.
+    /// 
+    /// It can either indicate a successful result, or a failure with a `RetryNotifier`.
     and NotifyResponse =
         | Ok
         | Retry of RetryNotifier
@@ -57,19 +68,25 @@ module Fsm =
         /// Called when a machine is created by the loop.
         /// 
         /// This is not something you'll call yourself, prefer using a constructor when pre-building machines.
-        abstract member create :    'c -> Scope -> Response
+        abstract member create : 'c -> Scope -> Response
         /// Called when the socket associated with this machine is ready to operate on.
-        abstract member ready :     'c -> Scope -> Response
+        abstract member ready : 'c -> Scope -> Response
         /// Called when a notification has been sent to this machine.
-        abstract member wakeup :    'c -> Scope -> Response
+        abstract member wakeup : 'c -> Scope -> Response
         /// Called when a timer has expired.
-        abstract member timeout :   'c -> Scope -> Response
+        abstract member timeout : 'c -> Scope -> Response
 
     type private LoopState =
     | Idle of UvLoopHandle * WakeupHandle
     | Running of UvLoopHandle * WakeupHandle
     | Closed
 
+    /// The main IO loop made up of state machines.
+    /// 
+    /// The loop manages the lifetimes of the machines and bound io and gives you a means to communicate
+    /// from outside the loop itself.
+    /// 
+    /// When `run` is called, the loop will block the calling thread until complete.
     type Loop<'c>(ctx) =
         let libuv = Binding()
         let mutable loop = Idle(new UvLoopHandle(), new WakeupHandle(new UvAsyncHandle(), new ConcurrentQueue<int64>()))
@@ -112,6 +129,9 @@ module Fsm =
 
                 | Response.Ok ->    ()
 
+        /// Add a generic `IMachine<'c>` to the loop.
+        /// 
+        /// This can only be done if the loop is in the `Idle` state.
         member this.addMachine (f: Scope -> IMachine<'c>) =
             match loop with
             | Closed ->             raise (NotImplementedException("Adding machines to dirty loops is not implemented"))
@@ -124,6 +144,15 @@ module Fsm =
 
                                     machines <- Map.add token machine machines
 
+        /// Run the loop.
+        /// 
+        /// This can only be done if the loop is in the `Idle` state and will block the calling thread.
+        /// 
+        /// Calling `run` will execute the `create` method of each machine, binding any io resources.
+        /// It will also set up the `wakeup` infrastructure and any `Notifier`s returned previously
+        /// will become available for use.
+        /// 
+        /// The `run` method won't terminate until all machines reach a state of `Done` or `Error`.
         member this.run () =
             match loop with
             | Closed ->         raise (NotImplementedException("Restarting dirty loops is not implemented"))
