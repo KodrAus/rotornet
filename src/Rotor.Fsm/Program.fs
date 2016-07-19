@@ -19,7 +19,7 @@ module Fsm =
     | Ok
     | Done
     | Error of string
-    | Deadline of TimeSpan
+    | Deadline of uint64
 
     /// A wakeup handle containing a message queue and `UvAsyncHandle` for waking up
     /// the loop without blocking.
@@ -27,10 +27,17 @@ module Fsm =
         member this.handle = handle
         member this.queue = queue
 
+        member this.init l f =
+            handle.Init(l, System.Action(f), null) |> ignore
+
         interface IDisposable with
             member this.Dispose() =
                 this.handle.Unreference()
                 this.handle.Dispose()
+
+    type private TimerHandle =
+    | NotRun of UvTimerHandle
+    | HasRun of UvTimerHandle
 
     /// A way for objects outside of the loop to wakeup a state machine.
     /// 
@@ -76,14 +83,29 @@ module Fsm =
         /// Called when a timer has expired.
         abstract member timeout : 'c -> Scope -> Response
 
+    type private Machine<'c>(m: IMachine<'c>, t: TimerHandle) =
+        let mutable timer = t
+
+        member this.machine = m
+
+        member this.init l f =
+            match timer with
+            | NotRun(t) ->  t.Init(l, System.Action(f), null) |> ignore
+
+            | HasRun(_) ->  raise (NotImplementedException("Starting dirty timers is not implemented"))
+
+        member this.timeout ms = 
+            match timer with
+            | NotRun(t) ->  timer <- TimerHandle.HasRun(t)
+                            t.Start(ms, 0UL)
+
+            | HasRun(t) ->  t.Stop()
+                            t.Start(ms, 0UL)
+
     type private LoopState =
     | Idle of UvLoopHandle * WakeupHandle
     | Running of UvLoopHandle * WakeupHandle
     | Closed
-
-    type private Machine<'c>(m: IMachine<'c>, t: UvTimerHandle) =
-        member this.machine = m
-        member this.timer = t
 
     /// The main IO loop made up of state machines.
     /// 
@@ -116,7 +138,7 @@ module Fsm =
             | 0 ->  stop()
             | _ ->  ()
 
-        let runOnce token timer f =
+        let runOnce token (fsm: Machine<'c>) f =
             match loop with
             | Closed -> ()
             | Idle(_, wakeup) | Running(_, wakeup) ->
@@ -129,8 +151,7 @@ module Fsm =
                 | Error(e) ->       printfn "Error running %i: '%s'" token e
                                     remove token
 
-                | Deadline(t) ->    //TODO: Start timer (or set repeat)
-                                    raise (NotImplementedException("Deadlines are not implemented"))
+                | Deadline(t) ->    fsm.timeout t
 
                 | Response.Ok ->    ()
 
@@ -147,7 +168,7 @@ module Fsm =
                                     let scope = Scope(token, wakeup)
                                     let machine = f scope
 
-                                    machines <- Map.add token (Machine(machine, new UvTimerHandle())) machines
+                                    machines <- Map.add token (Machine(machine, TimerHandle.NotRun(new UvTimerHandle()))) machines
 
         /// Run the loop.
         /// 
@@ -165,32 +186,28 @@ module Fsm =
             | Running(_, _) ->  0
 
             | Idle(l, w) ->     loop <- LoopState.Running(l, w)
-
                                 l.Init(libuv)
                                 
+                                //Initialise machines and timers
                                 machines |> Map.iter(fun token fsm -> 
-                                    //TODO: Init fsm.timer
-                                    runOnce token fsm.timer fsm.machine.create
+                                    fsm.init l (fun () -> runOnce token fsm fsm.machine.timeout)
+
+                                    runOnce token fsm fsm.machine.create
                                 )
 
-                                w.handle.Init(
-                                    l, 
-                                    System.Action(
-                                        fun () -> 
+                                //Initialise the wakeup queue
+                                w.init l (fun () -> 
                                             let rec handle () =
                                                 match w.queue.TryDequeue() with
                                                 | true, token ->    match (Map.tryFind token machines) with
-                                                                    | Some(fsm) -> runOnce token fsm.timer fsm.machine.wakeup
+                                                                    | Some(fsm) -> runOnce token fsm fsm.machine.wakeup
                                                                     | _ -> ()
 
                                                                     handle()
 
                                                 | false, _ ->       ()
 
-                                            handle()
-                                    ), 
-                                    null
-                                ) |> ignore
+                                            handle())
 
                                 match machines.Count with
                                 | 0 -> 0
