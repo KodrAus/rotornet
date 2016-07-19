@@ -21,33 +21,15 @@ module Fsm =
     | Error of string
     | Deadline of uint64
 
-    /// A wakeup handle containing a message queue and `UvAsyncHandle` for waking up
-    /// the loop without blocking.
-    type WakeupHandle(handle: UvAsyncHandle, queue: ConcurrentQueue<int64>) =
-        member this.handle = handle
-        member this.queue = queue
-
-        member this.init l f =
-            handle.Init(l, System.Action(f), null) |> ignore
-
-        interface IDisposable with
-            member this.Dispose() =
-                this.handle.Unreference()
-                this.handle.Dispose()
-
-    type private TimerHandle =
-    | NotRun of UvTimerHandle
-    | HasRun of UvTimerHandle
-
     /// A way for objects outside of the loop to wakeup a state machine.
     /// 
     /// The `Notifier` is specific to a single machine.
-    type Notifier(token: int64, wakeup: WakeupHandle) =
+    type Notifier(token: int64, handle: UvAsyncHandle, queue: ConcurrentQueue<int64>) =
         member this.wakeup () =
-            wakeup.queue.Enqueue(token)
-            try wakeup.handle.Send()
+            queue.Enqueue(token)
+            try handle.Send()
                 NotifyResponse.Ok
-            with | :? NullReferenceException -> NotifyResponse.Retry(RetryNotifier(wakeup.handle))
+            with | :? NullReferenceException -> NotifyResponse.Retry(RetryNotifier(handle))
 
     /// A way to retry sending a ping to a machine.
     /// 
@@ -65,8 +47,17 @@ module Fsm =
         | Ok
         | Retry of RetryNotifier
 
+    /// A wakeup handle containing a message queue and `UvAsyncHandle` for waking up
+    /// the loop without blocking.
+    type WakeupHandle(handle: UvAsyncHandle, queue: ConcurrentQueue<int64>) =
+        member this.init l f = handle.Init(l, System.Action(f), null) |> ignore
+
+        member this.notifier t = Notifier(t, handle, queue)
+
+        member this.dequeue () = queue.TryDequeue()
+
     type Scope(token: int64, wakeup: WakeupHandle) =
-        member this.notifier() = Notifier(token, wakeup)
+        member this.notifier() = wakeup.notifier token
 
     /// The base definition of a state machine.
     /// 
@@ -83,24 +74,12 @@ module Fsm =
         /// Called when a timer has expired.
         abstract member timeout : 'c -> Scope -> Response
 
-    type private Machine<'c>(m: IMachine<'c>, t: TimerHandle) =
-        let mutable timer = t
+    type private Machine<'c>(m: IMachine<'c>, t: UvTimerHandle) =
+        member this.init l f = t.Init(l, System.Action(f), null) |> ignore
 
         member this.machine = m
 
-        member this.init l f =
-            match timer with
-            | NotRun(t) ->  t.Init(l, System.Action(f), null) |> ignore
-
-            | HasRun(_) ->  raise (NotImplementedException("Starting dirty timers is not implemented"))
-
-        member this.timeout ms = 
-            match timer with
-            | NotRun(t) ->  timer <- TimerHandle.HasRun(t)
-                            t.Start(ms, 0UL)
-
-            | HasRun(t) ->  t.Stop()
-                            t.Start(ms, 0UL)
+        member this.timeout ms = t.Start(ms, 0UL)
 
     type private LoopState =
     | Idle of UvLoopHandle * WakeupHandle
@@ -126,8 +105,7 @@ module Fsm =
 
             | Closed ->             ()
 
-            | Running(l, wakeup) -> (wakeup :> IDisposable).Dispose()
-                                    l.Stop()
+            | Running(l, wakeup) -> l.Stop()
                                     
                                     loop <- LoopState.Closed
 
@@ -168,7 +146,7 @@ module Fsm =
                                     let scope = Scope(token, wakeup)
                                     let machine = f scope
 
-                                    machines <- Map.add token (Machine(machine, TimerHandle.NotRun(new UvTimerHandle()))) machines
+                                    machines <- Map.add token (Machine(machine, new UvTimerHandle())) machines
 
         /// Run the loop.
         /// 
@@ -198,7 +176,7 @@ module Fsm =
                                 //Initialise the wakeup queue
                                 w.init l (fun () -> 
                                             let rec handle () =
-                                                match w.queue.TryDequeue() with
+                                                match w.dequeue() with
                                                 | true, token ->    match (Map.tryFind token machines) with
                                                                     | Some(fsm) -> runOnce token fsm fsm.machine.wakeup
                                                                     | _ -> ()
