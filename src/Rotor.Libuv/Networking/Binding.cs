@@ -19,6 +19,11 @@ namespace Rotor.Libuv.Networking
             _uv_idle_init = NativeMethods.uv_idle_init;
             _uv_idle_start = NativeMethods.uv_idle_start;
             _uv_idle_stop = NativeMethods.uv_idle_stop;
+            _uv_timer_init = NativeMethods.uv_timer_init;
+            _uv_timer_start = NativeMethods.uv_timer_start;
+            _uv_timer_stop = NativeMethods.uv_timer_stop;
+            _uv_timer_again = NativeMethods.uv_timer_again;
+            _uv_timer_set_repeat = NativeMethods.uv_timer_set_repeat;
             _uv_ref = NativeMethods.uv_ref;
             _uv_unref = NativeMethods.uv_unref;
             _uv_fileno = NativeMethods.uv_fileno;
@@ -103,28 +108,6 @@ namespace Rotor.Libuv.Networking
             Check(_uv_loop_close(handle.InternalGetHandle()));
         }
 
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate void uv_idle_cb(IntPtr handle);
-        protected Func<UvLoopHandle, UvIdleHandle, int> _uv_idle_init;
-        public void idle_init(UvLoopHandle loop, UvIdleHandle handle)
-        {
-            Check(_uv_idle_init(loop, handle));
-        }
-
-        protected Func<UvIdleHandle, uv_idle_cb, int> _uv_idle_start;
-        public void idle_start(UvIdleHandle handle, uv_idle_cb cb)
-        {
-            handle.Validate();
-            Check(_uv_idle_start(handle, cb));
-        }
-
-        protected Func<UvIdleHandle, int> _uv_idle_stop;
-        public void idle_stop(UvIdleHandle handle)
-        {
-            handle.Validate(closed: true);
-            Check(_uv_idle_stop(handle));
-        }
-
         protected Func<UvLoopHandle, int, int> _uv_run;
         public int run(UvLoopHandle handle, int mode)
         {
@@ -157,6 +140,64 @@ namespace Rotor.Libuv.Networking
         {
             handle.Validate();
             _uv_unref(handle);
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate void uv_idle_cb(IntPtr handle);
+        protected Func<UvLoopHandle, UvIdleHandle, int> _uv_idle_init;
+        public void idle_init(UvLoopHandle loop, UvIdleHandle handle)
+        {
+            Check(_uv_idle_init(loop, handle));
+        }
+
+        protected Func<UvIdleHandle, uv_idle_cb, int> _uv_idle_start;
+        public void idle_start(UvIdleHandle handle, uv_idle_cb cb)
+        {
+            handle.Validate();
+            Check(_uv_idle_start(handle, cb));
+        }
+
+        protected Func<UvIdleHandle, int> _uv_idle_stop;
+        public void idle_stop(UvIdleHandle handle)
+        {
+            handle.Validate(closed: true);
+            Check(_uv_idle_stop(handle));
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate void uv_timer_cb(IntPtr handle);
+        protected Func<UvLoopHandle, UvTimerHandle, int> _uv_timer_init;
+        public void timer_init(UvLoopHandle loop, UvTimerHandle handle)
+        {
+            Check(_uv_timer_init(loop, handle));
+        }
+
+        protected Func<UvTimerHandle, uv_timer_cb, ulong, ulong, int> _uv_timer_start;
+        public void timer_start(UvTimerHandle handle, uv_timer_cb cb, ulong timeout, ulong repeat)
+        {
+            handle.Validate();
+            Check(_uv_timer_start(handle, cb, timeout, repeat));
+        }
+
+        protected Func<UvTimerHandle, int> _uv_timer_stop;
+        public void timer_stop(UvTimerHandle handle)
+        {
+            handle.Validate(closed: true);
+            Check(_uv_timer_stop(handle));
+        }
+
+        protected Func<UvTimerHandle, int> _uv_timer_again;
+        public void timer_again(UvTimerHandle handle)
+        {
+            handle.Validate(closed: true);
+            Check(_uv_timer_again(handle));
+        }
+
+        protected Func<UvTimerHandle, ulong, int> _uv_timer_set_repeat;
+        public void timer_set_repeat(UvTimerHandle handle, ulong repeat)
+        {
+            handle.Validate(closed: true);
+            Check(_uv_timer_set_repeat(handle, repeat));
         }
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -529,6 +570,24 @@ namespace Rotor.Libuv.Networking
 
             [DllImport("libuv", CallingConvention = CallingConvention.Cdecl)]
             public static extern int uv_idle_stop(UvIdleHandle handle);
+
+            [DllImport("libuv", CallingConvention = CallingConvention.Cdecl)]
+            public static extern int uv_timer_init(UvLoopHandle loop, UvTimerHandle handle);
+
+            [DllImport("libuv", CallingConvention = CallingConvention.Cdecl)]
+            public static extern int uv_timer_start(UvTimerHandle handle, uv_timer_cb timer_cb, ulong timeout, ulong repeat);
+
+            [DllImport("libuv", CallingConvention = CallingConvention.Cdecl)]
+            public static extern int uv_timer_stop(UvTimerHandle handle);
+
+            [DllImport("libuv", CallingConvention = CallingConvention.Cdecl)]
+            public static extern int uv_timer_again(UvTimerHandle handle);
+
+            [DllImport("libuv", CallingConvention = CallingConvention.Cdecl)]
+            public static extern int uv_timer_set_repeat(UvTimerHandle handle, ulong repeat);
+
+            [DllImport("libuv", CallingConvention = CallingConvention.Cdecl)]
+            public static extern int uv_timer_get_repeat(UvTimerHandle handle, out ulong repeat);
 
             [DllImport("libuv", CallingConvention = CallingConvention.Cdecl)]
             public static extern int uv_run(UvLoopHandle handle, int mode);

@@ -4,7 +4,7 @@
 
 //State: First Principals implementation
 
-//TODO: Use KestrelThread as a base for building up this layer
+//TODO: Work on stream module that implements socket events
 
 namespace Rotor
 
@@ -81,6 +81,10 @@ module Fsm =
     | Running of UvLoopHandle * WakeupHandle
     | Closed
 
+    type private Machine<'c>(m: IMachine<'c>, t: UvTimerHandle) =
+        member this.machine = m
+        member this.timer = t
+
     /// The main IO loop made up of state machines.
     /// 
     /// The loop manages the lifetimes of the machines and bound io and gives you a means to communicate
@@ -92,7 +96,7 @@ module Fsm =
         let mutable loop = Idle(new UvLoopHandle(), new WakeupHandle(new UvAsyncHandle(), new ConcurrentQueue<int64>()))
 
         let mutable context: 'c = ctx
-        let mutable machines: Map<int64, IMachine<'c>> = Map.empty
+        let mutable machines: Map<int64, Machine<'c>> = Map.empty
 
         let stop () =
             match loop with
@@ -112,7 +116,7 @@ module Fsm =
             | 0 ->  stop()
             | _ ->  ()
 
-        let runOnce token f =
+        let runOnce token timer f =
             match loop with
             | Closed -> ()
             | Idle(_, wakeup) | Running(_, wakeup) ->
@@ -125,7 +129,8 @@ module Fsm =
                 | Error(e) ->       printfn "Error running %i: '%s'" token e
                                     remove token
 
-                | Deadline(t) ->    raise (NotImplementedException("Deadlines are not implemented"))
+                | Deadline(t) ->    //TODO: Start timer (or set repeat)
+                                    raise (NotImplementedException("Deadlines are not implemented"))
 
                 | Response.Ok ->    ()
 
@@ -142,7 +147,7 @@ module Fsm =
                                     let scope = Scope(token, wakeup)
                                     let machine = f scope
 
-                                    machines <- Map.add token machine machines
+                                    machines <- Map.add token (Machine(machine, new UvTimerHandle())) machines
 
         /// Run the loop.
         /// 
@@ -163,7 +168,10 @@ module Fsm =
 
                                 l.Init(libuv)
                                 
-                                machines |> Map.iter(fun token machine -> runOnce token machine.create)
+                                machines |> Map.iter(fun token fsm -> 
+                                    //TODO: Init fsm.timer
+                                    runOnce token fsm.timer fsm.machine.create
+                                )
 
                                 w.handle.Init(
                                     l, 
@@ -172,7 +180,7 @@ module Fsm =
                                             let rec handle () =
                                                 match w.queue.TryDequeue() with
                                                 | true, token ->    match (Map.tryFind token machines) with
-                                                                    | Some(machine) -> runOnce token machine.wakeup
+                                                                    | Some(fsm) -> runOnce token fsm.timer fsm.machine.wakeup
                                                                     | _ -> ()
 
                                                                     handle()

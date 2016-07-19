@@ -10,14 +10,11 @@ namespace Rotor.Libuv.Basic
     {
         public static void Main(string[] args)
         {
-            //Create a libuv wrapper and a loop object
             var loop = new UvLoopHandle();
             var libuv = new Binding();
             loop.Init(libuv);
 
-            //Register an `idle` handle, which runs on every loop iteration
-            //This particular impl is like `while (ctr > 0) { ... }`
-            int ctr = 3;
+            int ctr = 10;
             var idle = new UvIdleHandle();
             idle.Init(loop, () => 
             {
@@ -35,7 +32,15 @@ namespace Rotor.Libuv.Basic
                 }
             }, null);
 
+            var timer = new UvTimerHandle();
+            timer.Init(loop, () =>
+            {
+                Console.WriteLine("Timeout");
+            }, null);
+
             idle.Start();
+            timer.Start(500, 2000);
+
             loop.Run();
         }
     }
