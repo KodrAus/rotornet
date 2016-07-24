@@ -29,7 +29,9 @@ module Fsm =
             queue.Enqueue(token)
             try handle.Send()
                 NotifyResponse.Ok
-            with | :? NullReferenceException -> NotifyResponse.Retry(RetryNotifier(handle))
+            with 
+            | :? NullReferenceException -> NotifyResponse.Retry(RetryNotifier(handle))
+            | :? ObjectDisposedException -> NotifyResponse.Closed
 
     /// A way to retry sending a ping to a machine.
     /// 
@@ -38,7 +40,9 @@ module Fsm =
         member this.wakeup () =
             try handle.Send()
                 NotifyResponse.Ok
-            with | :? NullReferenceException -> NotifyResponse.Retry(RetryNotifier(handle))
+            with
+            | :? NullReferenceException -> NotifyResponse.Retry(RetryNotifier(handle))
+            | :? ObjectDisposedException -> NotifyResponse.Closed
 
     /// The response from calling `wakeup` on a `Notifier`.
     /// 
@@ -46,6 +50,7 @@ module Fsm =
     and NotifyResponse =
         | Ok
         | Retry of RetryNotifier
+        | Closed
 
     /// A wakeup handle containing a message queue and `UvAsyncHandle` for waking up
     /// the loop without blocking.
@@ -55,6 +60,11 @@ module Fsm =
         member this.notifier t = Notifier(t, handle, queue)
 
         member this.dequeue () = queue.TryDequeue()
+
+        interface IDisposable with
+            member this.Dispose () = 
+                handle.Reference()
+                handle.Dispose()
 
     type Scope(token: int64, wakeup: WakeupHandle) =
         member this.notifier() = wakeup.notifier token
@@ -105,7 +115,9 @@ module Fsm =
 
             | Closed ->             ()
 
-            | Running(l, wakeup) -> l.Stop()
+            | Running(l, wakeup) -> (wakeup :> IDisposable).Dispose()
+                                    l.Stop()
+                                    (l :> IDisposable).Dispose()
                                     
                                     loop <- LoopState.Closed
 

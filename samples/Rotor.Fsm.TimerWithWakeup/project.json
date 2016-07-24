@@ -9,12 +9,8 @@
       ]
     }
   },
-  "testRunner": "xunit",
   "dependencies": {
-    "Rotor.Fsm": "*",
-    "Microsoft.FSharp.Core.netcore": "1.0.0-alpha-160509",
-    "xunit": "2.2.0-*",
-    "dotnet-test-xunit": "2.2.0-*"
+    "Microsoft.FSharp.Core.netcore": "1.0.0-alpha-160509"
   },
   "tools": {
     "dotnet-compile-fsc": {
@@ -29,6 +25,7 @@
   "frameworks": {
     "netcoreapp1.0": {
       "dependencies": {
+        "Rotor.Fsm": "*",
         "Microsoft.NETCore.App": {
           "type": "platform",
           "version": "1.0.0"
@@ -36,6 +33,7 @@
       },
       "imports": [
         "portable-net45+win8",
+        "netstandard1.3",
         "dnxcore50"
       ]
     }

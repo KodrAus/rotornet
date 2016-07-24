@@ -52,16 +52,15 @@ let main argv =
     //If the loop was just built then the handle will fail
     let rec notify resp =
         match resp with
-        | NotifyResponse.Ok ->  ()
-
         | Retry(retry) ->       Thread.Sleep(500)
                                 notify (retry.wakeup())
+                                
+        | _ ->                  ()
             
     //Send a few notifications to the loop
-    notify (notifier.Value.wakeup())
-    notify (notifier.Value.wakeup())
-    notify (notifier.Value.wakeup())
-    notify (notifier.Value.wakeup())
+    for i in 0 .. 30 do
+        notify (notifier.Value.wakeup())
+        Thread.Sleep(50)
 
     handle.Join()
     0
