@@ -2,7 +2,7 @@ open System
 open Rotor.Fsm
 
 //A machine with a mutable internal state
-type Counter<'c> (s) =
+type Machine<'c> (s) =
     //Our mutable state
     let mutable state = s
 
@@ -11,13 +11,10 @@ type Counter<'c> (s) =
             printfn "Created with counter %i" state
             Response.Deadline(100UL)
 
-        member this.ready c s =
-            Response.Ok
-
         member this.wakeup c s =
-            Response.Ok
+            Response.Done
 
-        //When a machine timeout occurs
+        //When a machine timeout occurs, check our state and go back to sleep
         member this.timeout c s =
             match state with
             | x when x < 0 ->   Error "state was less than 0"
@@ -31,8 +28,5 @@ type Counter<'c> (s) =
 [<EntryPoint>]
 let main argv = 
     let l = (loop ())
-    l.addMachine (
-        fun scope -> (Counter(3) :> IMachine<unit>)
-    )
+    l.addMachine (fun scope -> Machine(3))
     l |> run
-    0

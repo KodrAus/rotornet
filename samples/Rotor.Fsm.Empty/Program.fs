@@ -1,8 +1,5 @@
-open System
 open Rotor.Fsm
 
+//The smallest loop you can have. Doesn't do much...
 [<EntryPoint>]
-let main argv = 
-    let l = (loop ())
-    l |> run
-    0
+let main argv = (loop ()) |> run

@@ -3,7 +3,7 @@ open System.Threading
 open Rotor.Fsm
 
 //A machine with a mutable internal state
-type Counter<'c> (s) =
+type Machine<'c> (s) =
     //Our mutable state
     let mutable state = s
 
@@ -12,14 +12,13 @@ type Counter<'c> (s) =
             printfn "Created with counter %i" state
             Response.Deadline(5000UL)
 
-        member this.ready c s =
-            Response.Ok
-
+        //On wakeup, set a new deadline.
+        //Machines only have a single deadline, so if it's changed that's what's used
         member this.wakeup c s =
             printfn "Updating deadline"
             Response.Deadline(1000UL)
 
-        //When a machine timeout occurs
+        //When a machine timeout occurs, check state and go back to sleep
         member this.timeout c s =
             match state with
             | x when x < 0 ->   Error "state was less than 0"
@@ -40,9 +39,8 @@ let main argv =
                                 l.addMachine (
                                     fun scope -> 
                                         notifier <- Some(scope.notifier())
-                                        (Counter(10) :> IMachine<unit>)
-                                )
-                                l |> run)
+                                        Machine(10))
+                                l |> run |> ignore)
 
     handle.Start()
 
@@ -53,10 +51,10 @@ let main argv =
     //If the loop was just built then the handle will fail
     let rec notify resp =
         match resp with
-        | NotifyResponse.Ok | NotifyResponse.Closed ->  ()
-
         | Retry(retry) ->       Thread.Sleep(500)
                                 notify (retry.wakeup())
+                                
+        | _ ->                  ()
             
     //Send a few notifications to the loop
     notify (notifier.Value.wakeup())

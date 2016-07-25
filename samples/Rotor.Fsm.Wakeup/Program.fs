@@ -3,7 +3,7 @@ open System.Threading
 open Rotor.Fsm
 
 //A machine with a mutable internal state
-type Counter<'c> (s) =
+type Machine<'c> (s) =
     //Our mutable state
     let mutable state = s
 
@@ -12,9 +12,7 @@ type Counter<'c> (s) =
             printfn "Created with counter %i" state
             Response.Ok
 
-        member this.ready c s =
-            Response.Ok
-
+        //On wakeup, check state and go back to idling
         member this.wakeup c s =
             match state with
             | x when x < 0 ->   Error "state was less than 0"
@@ -25,9 +23,8 @@ type Counter<'c> (s) =
                                 state <- state - 1
                                 Response.Ok
 
-        //When a machine timeout occurs
         member this.timeout c s =
-            Done
+            Response.Done
 
 [<EntryPoint>]
 let main argv = 
@@ -39,9 +36,8 @@ let main argv =
                                 l.addMachine (
                                     fun scope -> 
                                         notifier <- Some(scope.notifier())
-                                        (Counter(3) :> IMachine<unit>)
-                                )
-                                l |> run)
+                                        Machine(3))
+                                l |> run |> ignore)
 
     handle.Start()
 
@@ -58,6 +54,8 @@ let main argv =
         | _ ->                  ()
             
     //Send a few notifications to the loop
+    //These notifications will continue to fire for a while after the loop stops.
+    //In this case, the notifier returns a response of 'Closed' instead of 'Retry'.
     for i in 0 .. 30 do
         notify (notifier.Value.wakeup())
         Thread.Sleep(50)

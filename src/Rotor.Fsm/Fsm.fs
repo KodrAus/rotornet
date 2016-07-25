@@ -4,8 +4,6 @@
 
 //State: First Principals implementation
 
-//TODO: Work on stream module that implements socket events
-
 namespace Rotor
 
 module Fsm =
@@ -24,6 +22,7 @@ module Fsm =
     /// A way for objects outside of the loop to wakeup a state machine.
     /// 
     /// The `Notifier` is specific to a single machine.
+    /// This is the external part of the notification channel.
     type Notifier(token: int64, handle: UvAsyncHandle, queue: ConcurrentQueue<int64>) =
         member this.wakeup () =
             queue.Enqueue(token)
@@ -36,7 +35,7 @@ module Fsm =
     /// A way to retry sending a ping to a machine.
     /// 
     /// This does not queue the message subsequent times.
-    and RetryNotifier(handle: UvAsyncHandle) =
+    and [<Struct>] RetryNotifier(handle: UvAsyncHandle) =
         member this.wakeup () =
             try handle.Send()
                 NotifyResponse.Ok
@@ -54,12 +53,13 @@ module Fsm =
 
     /// A wakeup handle containing a message queue and `UvAsyncHandle` for waking up
     /// the loop without blocking.
+    /// 
+    /// This is the internal part of the notification channel.
+    /// When the `WakeupHandle` is disposed, all other Notifiers are invalidated.
     type WakeupHandle(handle: UvAsyncHandle, queue: ConcurrentQueue<int64>) =
-        member this.init l f = handle.Init(l, System.Action(f), null) |> ignore
-
-        member this.notifier t = Notifier(t, handle, queue)
-
-        member this.dequeue () = queue.TryDequeue()
+        member this.init l f =      handle.Init(l, System.Action(f), null) |> ignore
+        member this.notifier t =    Notifier(t, handle, queue)
+        member this.dequeue () =    queue.TryDequeue()
 
         interface IDisposable with
             member this.Dispose () = 
@@ -76,20 +76,20 @@ module Fsm =
         /// Called when a machine is created by the loop.
         /// 
         /// This is not something you'll call yourself, prefer using a constructor when pre-building machines.
-        abstract member create : 'c -> Scope -> Response
-        /// Called when the socket associated with this machine is ready to operate on.
-        abstract member ready : 'c -> Scope -> Response
+        abstract member create :    'c -> Scope -> Response
         /// Called when a notification has been sent to this machine.
-        abstract member wakeup : 'c -> Scope -> Response
+        abstract member wakeup :    'c -> Scope -> Response
         /// Called when a timer has expired.
-        abstract member timeout : 'c -> Scope -> Response
+        abstract member timeout :   'c -> Scope -> Response
 
     type private Machine<'c>(m: IMachine<'c>, t: UvTimerHandle) =
-        member this.init l f = t.Init(l, System.Action(f), null) |> ignore
+        member this.init l f =      t.Init(l, System.Action(f), null) |> ignore
+        member this.machine =       m
+        member this.timeout ms =    t.Start(ms, 0UL)
 
-        member this.machine = m
-
-        member this.timeout ms = t.Start(ms, 0UL)
+        interface IDisposable with
+            member this.Dispose() =
+                t.Dispose()
 
     type private LoopState =
     | Idle of UvLoopHandle * WakeupHandle
@@ -103,11 +103,15 @@ module Fsm =
     /// 
     /// When `run` is called, the loop will block the calling thread until complete.
     type Loop<'c>(ctx) =
-        let libuv = Binding()
-        let mutable loop = Idle(new UvLoopHandle(), new WakeupHandle(new UvAsyncHandle(), new ConcurrentQueue<int64>()))
-
-        let mutable context: 'c = ctx
-        let mutable machines: Map<int64, Machine<'c>> = Map.empty
+        let libuv =                     Binding()
+        let mutable loop =              Idle(
+                                            new UvLoopHandle(), 
+                                            new WakeupHandle(
+                                                new UvAsyncHandle(), 
+                                                new ConcurrentQueue<int64>()))
+        let mutable context =           ctx
+        let mutable machines: 
+            Map<int64, Machine<'c>> =   Map.empty
 
         let stop () =
             match loop with
@@ -122,6 +126,9 @@ module Fsm =
                                     loop <- LoopState.Closed
 
         let remove token = 
+            let machine = Map.find token machines
+            (machine :> IDisposable).Dispose()
+
             machines <- Map.remove token machines
 
             match machines.Count with
@@ -148,7 +155,7 @@ module Fsm =
         /// Add a generic `IMachine<'c>` to the loop.
         /// 
         /// This can only be done if the loop is in the `Idle` state.
-        member this.addMachine (f: Scope -> IMachine<'c>) =
+        member this.addMachine (f: Scope -> 'a) =
             match loop with
             | Closed ->             raise (NotImplementedException("Adding machines to dirty loops is not implemented"))
 
@@ -158,7 +165,7 @@ module Fsm =
                                     let scope = Scope(token, wakeup)
                                     let machine = f scope
 
-                                    machines <- Map.add token (Machine(machine, new UvTimerHandle())) machines
+                                    machines <- Map.add token (new Machine<'c>((machine :> IMachine<'c>), new UvTimerHandle())) machines
 
         /// Run the loop.
         /// 
@@ -182,8 +189,7 @@ module Fsm =
                                 machines |> Map.iter(fun token fsm -> 
                                     fsm.init l (fun () -> runOnce token fsm fsm.machine.timeout)
 
-                                    runOnce token fsm fsm.machine.create
-                                )
+                                    runOnce token fsm fsm.machine.create)
 
                                 //Initialise the wakeup queue
                                 w.init l (fun () -> 
@@ -210,4 +216,4 @@ module Fsm =
     /// 
     /// This will block the calling thread until either the loop is stopped or all machines return a
     /// state of either `Done` or `Error`.
-    let run (l: Loop<'c>) = l.run() |> ignore
+    let run (l: Loop<'c>) = l.run()
