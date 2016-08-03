@@ -4,9 +4,10 @@
 
 //State: First Principals implementation
 
-namespace Rotor
+namespace Rotor.Fsm
 
 module Sock =
     open System
+    open Rotor.Fsm.Base
 
     let x = ()

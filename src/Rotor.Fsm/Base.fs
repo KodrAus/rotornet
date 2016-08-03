@@ -4,9 +4,9 @@
 
 //State: First Principals implementation
 
-namespace Rotor
+namespace Rotor.Fsm
 
-module Fsm =
+module Base =
     open System
     open System.Threading
     open System.Collections.Concurrent

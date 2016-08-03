@@ -1,5 +1,5 @@
 open System
-open Rotor.Fsm
+open Rotor.Fsm.Base
 
 //A machine with a mutable internal state
 type Machine<'c> (s) =

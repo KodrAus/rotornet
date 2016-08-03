@@ -5,7 +5,7 @@
     "compilerName": "fsc",
     "compile": {
       "includeFiles": [
-        "Fsm.fs",
+        "Base.fs",
         "Sock.fs"
       ]
     }
