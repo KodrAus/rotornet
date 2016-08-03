@@ -72,7 +72,8 @@ module Fsm =
     /// The base definition of a state machine.
     /// 
     /// State machines are generic over the context (`'c`) and scope which are inhected by the loop.
-    type IMachine<'c> =
+    [<AbstractClass>]
+    type IMachine<'c>() =
         /// Called when a machine is created by the loop.
         /// 
         /// This is not something you'll call yourself, prefer using a constructor when pre-building machines.
@@ -82,6 +83,13 @@ module Fsm =
         /// Called when a timer has expired.
         abstract member timeout :   'c -> Scope -> Response
 
+        abstract member dispose: unit -> unit
+        default this.dispose () = ()
+
+        interface IDisposable with
+            member this.Dispose() =
+                this.dispose ()
+
     type private Machine<'c>(m: IMachine<'c>, t: UvTimerHandle) =
         member this.init l f =      t.Init(l, System.Action(f), null) |> ignore
         member this.machine =       m
@@ -89,6 +97,7 @@ module Fsm =
 
         interface IDisposable with
             member this.Dispose() =
+                (m :> IDisposable).Dispose()
                 t.Dispose()
 
     type private LoopState =

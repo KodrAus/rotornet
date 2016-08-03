@@ -4,27 +4,28 @@ open Rotor.Fsm
 
 //A machine with a mutable internal state
 type Machine<'c> (s) =
+    inherit IMachine<'c>()
+
     //Our mutable state
     let mutable state = s
 
-    interface IMachine<'c> with
-        member this.create c s =
-            printfn "Created with counter %i" state
-            Response.Ok
+    override this.create c s =
+        printfn "Created with counter %i" state
+        Response.Ok
 
-        //On wakeup, check state and go back to idling
-        member this.wakeup c s =
-            match state with
-            | x when x < 0 ->   Error "state was less than 0"
+    //On wakeup, check state and go back to idling
+    override this.wakeup c s =
+        match state with
+        | x when x < 0 ->   Error "state was less than 0"
 
-            | 0 ->              Done
+        | 0 ->              Done
 
-            | x ->              printfn "Hello %i" x
-                                state <- state - 1
-                                Response.Ok
+        | x ->              printfn "Hello %i" x
+                            state <- state - 1
+                            Response.Ok
 
-        member this.timeout c s =
-            Response.Done
+    override this.timeout c s =
+        Response.Done
 
 [<EntryPoint>]
 let main argv = 
@@ -36,7 +37,7 @@ let main argv =
                                 l.addMachine (
                                     fun scope -> 
                                         notifier <- Some(scope.notifier())
-                                        Machine(3))
+                                        new Machine<_>(3))
                                 l |> run |> ignore)
 
     handle.Start()

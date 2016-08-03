@@ -4,30 +4,31 @@ open Rotor.Fsm
 
 //A machine with a mutable internal state
 type Machine<'c> (s) =
+    inherit IMachine<'c>()
+
     //Our mutable state
     let mutable state = s
 
-    interface IMachine<'c> with
-        member this.create c s =
-            printfn "Created with counter %i" state
-            Response.Deadline(5000UL)
+    override this.create c s =
+        printfn "Created with counter %i" state
+        Response.Deadline(5000UL)
 
-        //On wakeup, set a new deadline.
-        //Machines only have a single deadline, so if it's changed that's what's used
-        member this.wakeup c s =
-            printfn "Updating deadline"
-            Response.Deadline(1000UL)
+    //On wakeup, set a new deadline.
+    //Machines only have a single deadline, so if it's changed that's what's used
+    override this.wakeup c s =
+        printfn "Updating deadline"
+        Response.Deadline(1000UL)
 
-        //When a machine timeout occurs, check state and go back to sleep
-        member this.timeout c s =
-            match state with
-            | x when x < 0 ->   Error "state was less than 0"
+    //When a machine timeout occurs, check state and go back to sleep
+    override this.timeout c s =
+        match state with
+        | x when x < 0 ->   Error "state was less than 0"
 
-            | 0 ->              Done
+        | 0 ->              Done
 
-            | x ->              printfn "Hello %i" x
-                                state <- state - 1
-                                Response.Deadline(500UL)
+        | x ->              printfn "Hello %i" x
+                            state <- state - 1
+                            Response.Deadline(500UL)
 
 [<EntryPoint>]
 let main argv = 
@@ -39,7 +40,7 @@ let main argv =
                                 l.addMachine (
                                     fun scope -> 
                                         notifier <- Some(scope.notifier())
-                                        Machine(10))
+                                        new Machine<_>(10))
                                 l |> run |> ignore)
 
     handle.Start()
