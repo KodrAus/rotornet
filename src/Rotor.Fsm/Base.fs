@@ -13,6 +13,12 @@ module Base =
     open Rotor.Libuv.Networking
 
     /// The kind of response returned by an invokation of a state machine.
+    /// 
+    /// The possible responses are:
+    /// - `Ok`: move into an idle state and wait for a wakeup or deadline.
+    /// - `Done`: close the machine and any resources it holds because it's finished.
+    /// - `Error`: close the machine and any resources it holds because it broke.
+    /// - `Deadline`: set a timeout on the machine.
     type Response =
     | Ok
     | Done
@@ -78,8 +84,10 @@ module Base =
         /// 
         /// This is not something you'll call yourself, prefer using a constructor when pre-building machines.
         abstract member create :    'c -> Scope -> Response
+
         /// Called when a notification has been sent to this machine.
         abstract member wakeup :    'c -> Scope -> Response
+
         /// Called when a timer has expired.
         abstract member timeout :   'c -> Scope -> Response
 
