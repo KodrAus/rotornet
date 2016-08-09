@@ -26,7 +26,8 @@ module Sock =
     | Num of uint32
 
     /// The base definition of a state machine that acts on socket events.
-    type ISocketMachine<'c> =
+    [<AbstractClass>]
+    type ISocketMachine<'c>() =
         /// Called when the connection is idle.
         /// 
         /// At this point, the connection is connected and ready to read/write.
@@ -48,7 +49,7 @@ module Sock =
     /// 
     /// This fsm has a child `ISocketMachine` which provides the business logic for handling 
     /// io events.
-    type SocketMachine<'c>(m: ISocketMachine<'c>) =
+    type Socket<'c>(m: ISocketMachine<'c>) =
         inherit IMachine<'c>()
 
         override this.create c s =
