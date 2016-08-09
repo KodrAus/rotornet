@@ -13,7 +13,7 @@ open Rotor.Fsm.Sock
 type Server() =
     inherit ISocketMachine<unit>()
 
-    override this.idle c s =
+    override this.ready c s =
         raise (NotImplementedException("check for connection"))
 
     override this.read c s =

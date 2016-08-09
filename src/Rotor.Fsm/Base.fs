@@ -72,7 +72,8 @@ module Base =
                 handle.Reference()
                 handle.Dispose()
 
-    type Scope(token: int64, wakeup: WakeupHandle) =
+    type Scope(token: int64, loop: UvLoopHandle, wakeup: WakeupHandle) =
+        member this.register f = f(loop)
         member this.notifier() = wakeup.notifier token
 
     /// The base definition of a state machine.
@@ -155,8 +156,8 @@ module Base =
         let runOnce token (fsm: Machine<'c>) f =
             match loop with
             | Closed -> ()
-            | Idle(_, wakeup) | Running(_, wakeup) ->
-                let scope = Scope(token, wakeup)
+            | Idle(loop, wakeup) | Running(loop, wakeup) ->
+                let scope = Scope(token, loop, wakeup)
                 let res = try f context scope with | e -> Error(e.Message)
 
                 match res with
@@ -178,8 +179,8 @@ module Base =
 
             | Running(_, _) ->      ()
 
-            | Idle(_, wakeup) ->    let token = int64 machines.Count
-                                    let scope = Scope(token, wakeup)
+            | Idle(loop, wakeup) -> let token = int64 machines.Count
+                                    let scope = Scope(token, loop, wakeup)
                                     let machine = f scope
 
                                     machines <- Map.add token (new Machine<'c>((machine :> IMachine<'c>), new UvTimerHandle())) machines
@@ -201,14 +202,14 @@ module Base =
 
             | Idle(l, w) ->     loop <- LoopState.Running(l, w)
                                 l.Init(libuv)
-                                
-                                //Initialise machines and timers
+
+                                //Initialise machines and timer callbacks
                                 machines |> Map.iter(fun token fsm -> 
                                     fsm.init l (fun () -> runOnce token fsm fsm.machine.timeout)
 
                                     runOnce token fsm fsm.machine.create)
 
-                                //Initialise the wakeup queue
+                                //Initialise the wakeup queue callback
                                 w.init l (fun () -> 
                                             let rec handle () =
                                                 match w.dequeue() with
