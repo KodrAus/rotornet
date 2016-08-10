@@ -62,6 +62,9 @@ module Sock =
 
             //We want to handle accepting incoming connections ourselves, so the child machine
             //only acts on active connections.
+
+            //Will also need to be careful about how the lifetime of the scope is dealt with
+            //Passing it around to callbacks in here may have unexpected side effects.
             s.register (fun l -> conn.Init(l, null))
 
             raise (NotImplementedException("connect socket, wire up idle on ready"))

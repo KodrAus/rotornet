@@ -72,6 +72,7 @@ module Base =
                 handle.Reference()
                 handle.Dispose()
 
+    [<Struct>]
     type Scope(token: int64, loop: UvLoopHandle, wakeup: WakeupHandle) =
         member this.register f = f(loop)
         member this.notifier() = wakeup.notifier token
