@@ -8,6 +8,7 @@ namespace Rotor.Fsm
 
 module Base =
     open System
+    open System.Buffers
     open System.Threading
     open System.Collections.Concurrent
     open Rotor.Libuv.Networking
@@ -73,9 +74,15 @@ module Base =
                 handle.Dispose()
 
     [<Struct>]
-    type Scope(token: int64, loop: UvLoopHandle, wakeup: WakeupHandle) =
-        member this.register f = f(loop)
+    type EarlyScope(token: int64, loop: UvLoopHandle, wakeup: WakeupHandle) =
         member this.notifier() = wakeup.notifier token
+
+    [<Struct>]
+    type Scope(token: int64, loop: UvLoopHandle, wakeup: WakeupHandle, memory: ArrayPool<byte>) =
+        member this.notifier() =    wakeup.notifier token
+        member this.register f =    f(loop)
+        member this.rentBlock s =   memory.Rent(s)
+        member this.returnBlock m = memory.Return(m, false)
 
     /// The base definition of a state machine.
     /// 
@@ -97,22 +104,22 @@ module Base =
         default this.dispose () = ()
 
         interface IDisposable with
-            member this.Dispose() =
-                this.dispose ()
+            member this.Dispose() = this.dispose ()
 
+    /// An internal wrapper for all machine types
+    [<Struct>]
     type private Machine<'c>(m: IMachine<'c>, t: UvTimerHandle) =
         member this.init l f =      t.Init(l, System.Action(f), null) |> ignore
         member this.machine =       m
         member this.timeout ms =    t.Start(ms, 0UL)
 
         interface IDisposable with
-            member this.Dispose() =
-                (m :> IDisposable).Dispose()
-                t.Dispose()
+            member this.Dispose() = (m :> IDisposable).Dispose()
+                                    t.Dispose()
 
     type private LoopState =
     | Idle of UvLoopHandle * WakeupHandle
-    | Running of UvLoopHandle * WakeupHandle
+    | Running of UvLoopHandle * WakeupHandle * ArrayPool<byte>
     | Closed
 
     /// The main IO loop made up of state machines.
@@ -123,65 +130,65 @@ module Base =
     /// When `run` is called, the loop will block the calling thread until complete.
     type Loop<'c>(ctx) =
         let libuv =                     Binding()
-        let mutable loop =              Idle(
-                                            new UvLoopHandle(), 
-                                            new WakeupHandle(
-                                                new UvAsyncHandle(), 
-                                                new ConcurrentQueue<int64>()))
+        let mutable loop =              Idle(new UvLoopHandle(),
+                                             new WakeupHandle(new UvAsyncHandle(),
+                                                              new ConcurrentQueue<int64>()))
         let mutable context =           ctx
-        let mutable machines: 
+        let mutable machines:
             Map<int64, Machine<'c>> =   Map.empty
 
         let stop () =
             match loop with
-            | Idle(_, _) ->         ()
+            | Idle(_, _) ->            ()
 
-            | Closed ->             ()
+            | Closed ->                ()
 
-            | Running(l, wakeup) -> (wakeup :> IDisposable).Dispose()
-                                    l.Stop()
-                                    (l :> IDisposable).Dispose()
-                                    
-                                    loop <- LoopState.Closed
+            | Running(l, wakeup, _) -> (wakeup :> IDisposable).Dispose()
+                                       l.Stop()
+                                       (l :> IDisposable).Dispose()
 
-        let remove token = 
+                                       loop <- LoopState.Closed
+
+        let remove token =
             let machine = Map.find token machines
             (machine :> IDisposable).Dispose()
 
             machines <- Map.remove token machines
 
             match machines.Count with
-            | 0 ->  stop()
-            | _ ->  ()
+            | 0 -> stop()
+            | _ -> ()
 
         let runOnce token (fsm: Machine<'c>) f =
             match loop with
             | Closed -> ()
-            | Idle(loop, wakeup) | Running(loop, wakeup) ->
-                let scope = Scope(token, loop, wakeup)
+            | Idle(_, _) -> ()
+            | Running(loop, wakeup, memory) ->
+                let scope = Scope(token, loop, wakeup, memory)
                 let res = try f context scope with | e -> Error(e.Message)
 
                 match res with
-                | Done ->           remove token
+                | Done ->        remove token
 
-                | Error(e) ->       printfn "Error running %i: '%s'" token e
-                                    remove token
+                | Error(e) ->    printfn "Error running %i: '%s'" token e
+                                 remove token
 
-                | Deadline(t) ->    fsm.timeout t
+                | Deadline(t) -> fsm.timeout t
 
-                | Response.Ok ->    ()
+                | Response.Ok -> ()
 
         /// Add a generic `IMachine<'c>` to the loop.
         /// 
         /// This can only be done if the loop is in the `Idle` state.
-        member this.addMachine (f: Scope -> 'a) =
+        member this.addMachine (f: EarlyScope -> 'a) =
             match loop with
             | Closed ->             raise (NotImplementedException("Adding machines to dirty loops is not implemented"))
 
-            | Running(_, _) ->      ()
+            | Running(_, _, _) ->   raise (NotImplementedException("Adding machines to running loops is not implemented"))
 
+                                    //TODO: Invalidate notifier for closed machines
             | Idle(loop, wakeup) -> let token = int64 machines.Count
-                                    let scope = Scope(token, loop, wakeup)
+                                    let scope = EarlyScope(token, loop, wakeup)
                                     let machine = f scope
 
                                     machines <- Map.add token (new Machine<'c>((machine :> IMachine<'c>), new UvTimerHandle())) machines
@@ -197,36 +204,33 @@ module Base =
         /// The `run` method won't terminate until all machines reach a state of `Done` or `Error`.
         member this.run () =
             match loop with
-            | Closed ->         raise (NotImplementedException("Restarting dirty loops is not implemented"))
+            | Closed ->               raise (NotImplementedException("Restarting dirty loops is not implemented"))
 
-            | Running(_, _) ->  0
+            | Running(_, _, _) ->     0
 
-            | Idle(l, w) ->     loop <- LoopState.Running(l, w)
-                                l.Init(libuv)
+            | Idle(handle, wakeup) -> let memory = ArrayPool<byte>.Create()
+                                      loop <- LoopState.Running(handle, wakeup, memory)
+                                      handle.Init(libuv)
 
-                                //Initialise machines and timer callbacks
-                                machines |> Map.iter(fun token fsm -> 
-                                    fsm.init l (fun () -> runOnce token fsm fsm.machine.timeout)
+                                      //Initialise machines and timer callbacks
+                                      machines |> Map.iter(fun token fsm -> fsm.init handle (fun () -> runOnce token fsm fsm.machine.timeout)
+                                                                            runOnce token fsm fsm.machine.create)
 
-                                    runOnce token fsm fsm.machine.create)
+                                      //Initialise the wakeup queue callback
+                                      //TODO: Don't allow dequeing indefinitely, but don't copy either
+                                      let rec handleWakeup () = match wakeup.dequeue() with
+                                                                | true, token -> match (Map.tryFind token machines) with
+                                                                                 | Some(fsm) -> runOnce token fsm fsm.machine.wakeup
+                                                                                 | _ -> ()
 
-                                //Initialise the wakeup queue callback
-                                w.init l (fun () -> 
-                                            let rec handle () =
-                                                match w.dequeue() with
-                                                | true, token ->    match (Map.tryFind token machines) with
-                                                                    | Some(fsm) -> runOnce token fsm fsm.machine.wakeup
-                                                                    | _ -> ()
+                                                                                 handleWakeup()
 
-                                                                    handle()
+                                                                | false, _ ->    ()
+                                      wakeup.init handle handleWakeup
 
-                                                | false, _ ->       ()
-
-                                            handle())
-
-                                match machines.Count with
-                                | 0 -> 0
-                                | _ -> l.Run()
+                                      match machines.Count with
+                                      | 0 -> 0
+                                      | _ -> handle.Run()
 
     /// Build a loop with the given arguments.
     let loop c = Loop(c)

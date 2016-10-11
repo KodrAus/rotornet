@@ -4,10 +4,14 @@
 
 //State: First Principals implementation
 
+//Check out: Microsoft.AspNetCore.Server.Kestrel.Internal.Http.Connection
+//Check out: Microsoft.AspNetCore.Server.Kestrel.Internal.Http.SocketInput
+
 namespace Rotor.Fsm
 
 module Sock =
     open System
+    open System.Buffers
     open Rotor.Libuv.Networking
     open Rotor.Fsm.Base
 

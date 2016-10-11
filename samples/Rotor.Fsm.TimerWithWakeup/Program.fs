@@ -54,9 +54,9 @@ let main argv =
         match resp with
         | Retry(retry) ->       Thread.Sleep(500)
                                 notify (retry.wakeup())
-                                
+
         | _ ->                  ()
-            
+
     //Send a few notifications to the loop
     notify (notifier.Value.wakeup())
 
