@@ -263,7 +263,9 @@ module Base =
                                       wakeup.init handle handleWakeup
 
                                       //Initialise machines and timer callbacks
-                                      machines |> Map.iter(fun token fsm -> create(token, fsm))
+                                      machines |> Map.iter(fun token fsm -> match fsm.state with
+                                                                            | MachineState.Uninitialised -> create(token, fsm)
+                                                                            | MachineState.Running -> ())
 
                                       match machines.Count with
                                       | 0 -> 0
