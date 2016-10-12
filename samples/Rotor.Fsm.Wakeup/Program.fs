@@ -10,18 +10,14 @@ type Machine<'c> (s) =
     let mutable state = s
 
     override this.create c s =
-        printfn "Created with counter %i" state
         Response.Ok
 
     //On wakeup, check state and go back to idling
     override this.wakeup c s =
         match state with
-        | x when x < 0 ->   Error "state was less than 0"
-
         | 0 ->              Done
 
-        | x ->              printfn "Hello %i" x
-                            state <- state - 1
+        | x ->              state <- state - 1
                             Response.Ok
 
     override this.timeout c s =
@@ -37,7 +33,7 @@ let main argv =
                                 l.addMachine (
                                     fun scope -> 
                                         notifier <- Some(scope.notifier())
-                                        new Machine<_>(3))
+                                        new Machine<_>(1000))
                                 l |> run |> ignore)
 
     handle.Start()
@@ -57,7 +53,7 @@ let main argv =
     //Send a few notifications to the loop
     //These notifications will continue to fire for a while after the loop stops.
     //In this case, the notifier returns a response of 'Closed' instead of 'Retry'.
-    for i in 0 .. 30 do
+    for i in 0 .. 1000 do
         notify (notifier.Value.wakeup())
         Thread.Sleep(50)
 
