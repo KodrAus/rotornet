@@ -1,5 +1,6 @@
 open System
 open System.Threading
+open Rotor.Libuv
 open Rotor.Fsm.Base
 open Rotor.Fsm.Sock
 
@@ -25,6 +26,6 @@ type Machine() =
 [<EntryPoint>]
 let main argv =
     let l = (loop ())
-    l.addMachine (fun scope -> new Socket<_>(new Machine()))
+    l.addMachine (fun scope -> new Socket<_>(ServerAddress.FromUrl("tcp://localhost:3000"), new Machine()))
     l |> run |> ignore
     0

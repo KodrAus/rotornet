@@ -7,11 +7,13 @@
 //Check out: Microsoft.AspNetCore.Server.Kestrel.Internal.Http.Connection
 //Check out: Microsoft.AspNetCore.Server.Kestrel.Internal.Http.SocketInput
 
+//Build implementations for server and client
+
 namespace Rotor.Fsm
 
 module Sock =
     open System
-    open System.Buffers
+    open Rotor.Libuv
     open Rotor.Libuv.Networking
     open Rotor.Fsm.Base
 
@@ -54,10 +56,11 @@ module Sock =
     /// 
     /// This fsm has a child `ISocketMachine` which provides the business logic for handling 
     /// io events.
-    type Socket<'c>(m: ISocketMachine<'c>) =
+    type Socket<'c>(addr: ServerAddress, m: ISocketMachine<'c>) =
         inherit IMachine<'c>()
 
         let mutable conn = new UvTcpHandle()
+        let listen f = conn.Listen(1, System.Action<UvStreamHandle,int,exn,obj>(f), null) |> ignore
 
         override this.create c s =
             //Register and initialise the connection with the loop
@@ -69,9 +72,17 @@ module Sock =
 
             //Will also need to be careful about how the lifetime of the scope is dealt with
             //Passing it around to callbacks in here may have unexpected side effects.
+            printfn "creating"
+
             s.register (fun l -> conn.Init(l, null))
 
-            raise (NotImplementedException("connect socket, wire up idle on ready"))
+            //TODO: Should probably be in child machine
+            conn.Bind(addr)
+            listen (fun stream status error state -> printfn "incoming connection")
+
+            printfn "ready"
+
+            Response.Done
 
         override this.wakeup c s =
             raise (NotImplementedException("check for idle, call wakeup on child"))
