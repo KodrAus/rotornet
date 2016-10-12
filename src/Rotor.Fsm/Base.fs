@@ -66,7 +66,10 @@ module Base =
     type WakeupHandle(handle: UvAsyncHandle, queue: ConcurrentQueue<int64>) =
         member this.init l f =   handle.Init(l, System.Action(f), null) |> ignore
         member this.notifier t = Notifier(t, handle, queue)
-        member this.dequeue () = queue.TryDequeue()
+        member this.dequeue =    queue.TryDequeue()
+        member this.length =     queue.Count
+        member this.wakeup =     try handle.Send()
+                                 with | :? ObjectDisposedException -> ()
 
         interface IDisposable with
             member this.Dispose () =
@@ -163,28 +166,29 @@ module Base =
 
         let runOnce token (fsm: Machine<'c>) f =
             match loop with
-            | Closed -> ()
-            | Idle(_, _) -> ()
-            | Running(loop, wakeup, memory) ->
-                let scope = Scope(token, loop, wakeup, memory)
-                let res = try f context scope with | e -> Error(e.Message)
+            | Running(loop, wakeup, memory) -> let scope = Scope(token, loop, wakeup, memory)
+                                               let res = try f context scope with | e -> Error(e.Message)
 
-                match res with
-                | Done ->        remove token
+                                               match res with
+                                               | Done ->        remove token
 
-                | Error(e) ->    printfn "Error running %i: '%s'" token e
-                                 remove token
+                                               | Error(e) ->    printfn "Error running %i: '%s'" token e
+                                                                remove token
 
-                | Deadline(t) -> fsm.timeout t
+                                               | Deadline(t) -> fsm.timeout t
 
-                | Response.Ok -> ()
+                                               | Response.Ok -> ()
+
+            | Closed ->                        ()
+
+            | Idle(_, _) ->                    ()
+            
 
         /// Add a generic `IMachine<'c>` to the loop.
         /// 
         /// This can only be done if the loop is in the `Idle` state.
         member this.addMachine (f: EarlyScope -> 'a) =
             match loop with
-                                    //TODO: Invalidate notifier for closed machines
             | Idle(loop, wakeup) -> let token = int64 machines.Count
                                     let scope = EarlyScope(token, loop, wakeup)
                                     let machine = f scope
@@ -211,21 +215,32 @@ module Base =
                                       loop <- LoopState.Running(handle, wakeup, memory)
                                       handle.Init(libuv)
 
+                                      //Deqeue at most l items
+                                      //This is to make sure other events this loop iteration get a chance to run
+                                      let rec dequeueAtMost l =  match l with
+                                                                 | 0 -> ()
+
+                                                                 | _ -> match wakeup.dequeue with
+                                                                        | true, token -> match (Map.tryFind token machines) with
+                                                                                         | Some(fsm) -> runOnce token fsm fsm.machine.wakeup
+                                                                                         | _ -> ()
+
+                                                                                         dequeueAtMost (l - 1)
+
+                                                                        | false, _ ->    ()
+
+                                      //Initialise wakeup mechanism
+                                      let handleWakeup () = dequeueAtMost (wakeup.length)
+
+                                                            match wakeup.length with
+                                                            | 0 -> ()
+                                                            | _ -> wakeup.wakeup
+
+                                      wakeup.init handle handleWakeup
+
                                       //Initialise machines and timer callbacks
                                       machines |> Map.iter(fun token fsm -> fsm.init handle (fun () -> runOnce token fsm fsm.machine.timeout)
                                                                             runOnce token fsm fsm.machine.create)
-
-                                      //Initialise the wakeup queue callback
-                                      //TODO: Don't allow dequeing indefinitely, but don't copy either
-                                      let rec handleWakeup () = match wakeup.dequeue() with
-                                                                | true, token -> match (Map.tryFind token machines) with
-                                                                                 | Some(fsm) -> runOnce token fsm fsm.machine.wakeup
-                                                                                 | _ -> ()
-
-                                                                                 handleWakeup()
-
-                                                                | false, _ ->    ()
-                                      wakeup.init handle handleWakeup
 
                                       match machines.Count with
                                       | 0 -> 0
