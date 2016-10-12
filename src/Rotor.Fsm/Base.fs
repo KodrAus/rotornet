@@ -155,6 +155,9 @@ module Base =
         let mutable machines:
             Map<int64, Machine<'c>> =   Map.empty
 
+        /// Stop the loop.
+        /// 
+        /// This will only succeed when there are no active or referenced handles.
         let stop () =
             match loop with
             | Running(handle, wakeup, memory) -> handle.Stop()
@@ -169,6 +172,7 @@ module Base =
 
             | Closed ->                          ()
 
+        /// Dipose and remove a machine.
         let remove token =
             let machine = Map.find token machines
             (machine :> IDisposable).Dispose()
@@ -179,6 +183,7 @@ module Base =
             | 0 -> stop()
             | _ -> ()
 
+        /// Run a function on a machine with a context and scope.
         let runOnce token (fsm: Machine<'c>) f =
             match loop with
             | Running(loop, wakeup, memory) -> let scope = Scope(token, loop, wakeup, memory)
@@ -198,22 +203,64 @@ module Base =
 
             | Idle(_, _) ->                    ()
             
+        /// Initialise loop internals.
+        /// 
+        /// This assumes internals are currently uninitialised.
+        let init (handle: UvLoopHandle) (wakeup: WakeupHandle) (memory: MemoryPool) =
+            handle.Init(libuv)
+
+            let create(token: int64, fsm: Machine<'c>) = fsm.init handle (fun () -> runOnce token fsm fsm.machine.timeout)
+                                                         runOnce token fsm fsm.machine.create
+
+            let wakeupMachine token = match (Map.tryFind token machines) with
+                                      | Some(fsm) -> match fsm.state with
+                                                     //Wakeups may get called on Uninitialised machines
+                                                     //We only run this check for wakeups
+                                                     | MachineState.Uninitialised -> create(token, fsm)
+                                                     | MachineState.Running -> ()
+
+                                                     runOnce token fsm fsm.machine.wakeup
+                                      | _ -> ()
+            //Deqeue at most l items
+            //This is to make sure other events this loop iteration get a chance to run
+            let rec dequeueAtMost l =  match l with
+                                       | 0 -> ()
+
+                                       | _ -> match wakeup.dequeue with
+                                              | true, token -> wakeupMachine token
+                                                               dequeueAtMost (l - 1)
+
+                                              | false, _ ->    ()
+
+            //Initialise wakeup mechanism
+            let handleWakeup () = dequeueAtMost (wakeup.length)
+
+                                  match wakeup.length with
+                                  | 0 -> ()
+                                  | _ -> wakeup.wakeup
+
+            wakeup.init handle handleWakeup
+
+            //Initialise machines and timer callbacks
+            machines |> Map.iter(fun token fsm -> match fsm.state with
+                                                  | MachineState.Uninitialised -> create(token, fsm)
+                                                  | MachineState.Running -> ())
 
         /// Add a generic `IMachine<'c>` to the loop.
         /// 
         /// This can only be done if the loop is in the `Idle` state.
         member this.addMachine (f: EarlyScope -> 'a) =
             match loop with
-            | Idle(loop, wakeup) -> let token = int64 machines.Count
-                                    let scope = EarlyScope(token, loop, wakeup)
-                                    let machine = f scope
+            | Idle(handle, wakeup) -> let token = int64 machines.Count
+                                      let scope = EarlyScope(token, handle, wakeup)
+                                      let machine = f scope
 
-                                    let machine = new Machine<'c>((machine :> IMachine<'c>), new UvTimerHandle())
-                                    machines <- machines |> Map.add token machine
+                                      let machine = new Machine<'c>((machine :> IMachine<'c>), new UvTimerHandle())
+                                      machines <- machines |> Map.add token machine
 
-            | Closed ->             raise (NotImplementedException("Adding machines to dirty loops is not implemented"))
+            | Closed ->               raise (NotImplementedException("Adding machines to dirty loops is not implemented"))
 
-            | Running(_, _, _) ->   raise (NotImplementedException("Adding machines to running loops is not implemented"))
+            | Running(_, _, _) ->     raise (NotImplementedException("Adding machines to running loops is not implemented"))
 
         /// Run the loop.
         /// 
@@ -228,44 +275,8 @@ module Base =
             match loop with
             | Idle(handle, wakeup) -> let memory = new MemoryPool()
                                       loop <- LoopState.Running(handle, wakeup, memory)
-                                      handle.Init(libuv)
 
-                                      let create(token: int64, fsm: Machine<'c>) = fsm.init handle (fun () -> runOnce token fsm fsm.machine.timeout)
-                                                                                   runOnce token fsm fsm.machine.create
-
-                                      //Deqeue at most l items
-                                      //This is to make sure other events this loop iteration get a chance to run
-                                      let rec dequeueAtMost l =  match l with
-                                                                 | 0 -> ()
-
-                                                                 | _ -> match wakeup.dequeue with
-                                                                        | true, token -> match (Map.tryFind token machines) with
-                                                                                         | Some(fsm) -> match fsm.state with
-                                                                                                        //Wakeups may get called on Uninitialised machines
-                                                                                                        //We only run this check for wakeups
-                                                                                                        | MachineState.Uninitialised -> create(token, fsm)
-                                                                                                        | MachineState.Running -> ()
-
-                                                                                                        runOnce token fsm fsm.machine.wakeup
-                                                                                         | _ -> ()
-
-                                                                                         dequeueAtMost (l - 1)
-
-                                                                        | false, _ ->    ()
-
-                                      //Initialise wakeup mechanism
-                                      let handleWakeup () = dequeueAtMost (wakeup.length)
-
-                                                            match wakeup.length with
-                                                            | 0 -> ()
-                                                            | _ -> wakeup.wakeup
-
-                                      wakeup.init handle handleWakeup
-
-                                      //Initialise machines and timer callbacks
-                                      machines |> Map.iter(fun token fsm -> match fsm.state with
-                                                                            | MachineState.Uninitialised -> create(token, fsm)
-                                                                            | MachineState.Running -> ())
+                                      init handle wakeup memory
 
                                       match machines.Count with
                                       | 0 -> 0
