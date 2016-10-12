@@ -31,7 +31,7 @@ type Machine<'c> (s) =
                             Response.Deadline(500UL)
 
 [<EntryPoint>]
-let main argv = 
+let main argv =
     let mutable notifier = None
 
     //Spin up an io loop in a thread
@@ -57,7 +57,7 @@ let main argv =
 
         | _ ->                  ()
 
-    //Send a few notifications to the loop
+    //Send a notification to the loop to update its timeout
     notify (notifier.Value.wakeup())
 
     handle.Join()

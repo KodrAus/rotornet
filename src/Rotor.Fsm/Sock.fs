@@ -39,16 +39,16 @@ module Sock =
         abstract member ready :     'c -> Scope -> Intent
 
         /// Called when the connection has data to read.
-        abstract member read :     'c -> Scope -> Intent
+        abstract member read :      'c -> Scope -> Intent
 
         /// Called when the connection is ready to write to.
-        abstract member write :    'c -> Scope -> Intent
+        abstract member write :     'c -> Scope -> Intent
 
         /// Called when the parent fsm is woken up.
-        abstract member wakeup :   'c -> Scope -> Intent
+        abstract member wakeup :    'c -> Scope -> Intent
 
         /// Called when the parent fsm times out.
-        abstract member timeout :  'c -> Scope -> Intent
+        abstract member timeout :   'c -> Scope -> Intent
 
     /// A machine that manages a socket connection.
     /// 

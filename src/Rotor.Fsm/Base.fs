@@ -8,10 +8,10 @@ namespace Rotor.Fsm
 
 module Base =
     open System
-    open System.Buffers
     open System.Threading
     open System.Collections.Concurrent
     open Rotor.Libuv.Networking
+    open Rotor.Libuv.Infrastructure
 
     /// The kind of response returned by an invokation of a state machine.
     /// 
@@ -64,12 +64,12 @@ module Base =
     /// This is the internal part of the notification channel.
     /// When the `WakeupHandle` is disposed, all other Notifiers are invalidated.
     type WakeupHandle(handle: UvAsyncHandle, queue: ConcurrentQueue<int64>) =
-        member this.init l f =      handle.Init(l, System.Action(f), null) |> ignore
-        member this.notifier t =    Notifier(t, handle, queue)
-        member this.dequeue () =    queue.TryDequeue()
+        member this.init l f =   handle.Init(l, System.Action(f), null) |> ignore
+        member this.notifier t = Notifier(t, handle, queue)
+        member this.dequeue () = queue.TryDequeue()
 
         interface IDisposable with
-            member this.Dispose () = 
+            member this.Dispose () =
                 handle.Reference()
                 handle.Dispose()
 
@@ -78,11 +78,11 @@ module Base =
         member this.notifier() = wakeup.notifier token
 
     [<Struct>]
-    type Scope(token: int64, loop: UvLoopHandle, wakeup: WakeupHandle, memory: ArrayPool<byte>) =
+    type Scope(token: int64, loop: UvLoopHandle, wakeup: WakeupHandle, memory: MemoryPool) =
         member this.notifier() =    wakeup.notifier token
         member this.register f =    f(loop)
-        member this.rentBlock s =   memory.Rent(s)
-        member this.returnBlock m = memory.Return(m, false)
+        member this.leaseBlock s =  memory.Lease()
+        member this.returnBlock m = memory.Return(m)
 
     /// The base definition of a state machine.
     /// 
@@ -109,9 +109,9 @@ module Base =
     /// An internal wrapper for all machine types
     [<Struct>]
     type private Machine<'c>(m: IMachine<'c>, t: UvTimerHandle) =
-        member this.init l f =      t.Init(l, System.Action(f), null) |> ignore
-        member this.machine =       m
-        member this.timeout ms =    t.Start(ms, 0UL)
+        member this.init l f =   t.Init(l, System.Action(f), null) |> ignore
+        member this.machine =    m
+        member this.timeout ms = t.Start(ms, 0UL)
 
         interface IDisposable with
             member this.Dispose() = (m :> IDisposable).Dispose()
@@ -119,7 +119,7 @@ module Base =
 
     type private LoopState =
     | Idle of UvLoopHandle * WakeupHandle
-    | Running of UvLoopHandle * WakeupHandle * ArrayPool<byte>
+    | Running of UvLoopHandle * WakeupHandle * MemoryPool
     | Closed
 
     /// The main IO loop made up of state machines.
@@ -139,15 +139,17 @@ module Base =
 
         let stop () =
             match loop with
-            | Idle(_, _) ->            ()
+            | Running(handle, wakeup, memory) -> handle.Stop()
 
-            | Closed ->                ()
+                                                 (wakeup :> IDisposable).Dispose()
+                                                 (handle :> IDisposable).Dispose()
+                                                 (memory :> IDisposable).Dispose()
 
-            | Running(l, wakeup, _) -> (wakeup :> IDisposable).Dispose()
-                                       l.Stop()
-                                       (l :> IDisposable).Dispose()
+                                                 loop <- LoopState.Closed
 
-                                       loop <- LoopState.Closed
+            | Idle(_, _) ->                      ()
+
+            | Closed ->                          ()
 
         let remove token =
             let machine = Map.find token machines
@@ -182,16 +184,17 @@ module Base =
         /// This can only be done if the loop is in the `Idle` state.
         member this.addMachine (f: EarlyScope -> 'a) =
             match loop with
-            | Closed ->             raise (NotImplementedException("Adding machines to dirty loops is not implemented"))
-
-            | Running(_, _, _) ->   raise (NotImplementedException("Adding machines to running loops is not implemented"))
-
                                     //TODO: Invalidate notifier for closed machines
             | Idle(loop, wakeup) -> let token = int64 machines.Count
                                     let scope = EarlyScope(token, loop, wakeup)
                                     let machine = f scope
 
-                                    machines <- Map.add token (new Machine<'c>((machine :> IMachine<'c>), new UvTimerHandle())) machines
+                                    let machine = new Machine<'c>((machine :> IMachine<'c>), new UvTimerHandle())
+                                    machines <- machines |> Map.add token machine
+
+            | Closed ->             raise (NotImplementedException("Adding machines to dirty loops is not implemented"))
+
+            | Running(_, _, _) ->   raise (NotImplementedException("Adding machines to running loops is not implemented"))
 
         /// Run the loop.
         /// 
@@ -204,11 +207,7 @@ module Base =
         /// The `run` method won't terminate until all machines reach a state of `Done` or `Error`.
         member this.run () =
             match loop with
-            | Closed ->               raise (NotImplementedException("Restarting dirty loops is not implemented"))
-
-            | Running(_, _, _) ->     0
-
-            | Idle(handle, wakeup) -> let memory = ArrayPool<byte>.Create()
+            | Idle(handle, wakeup) -> let memory = new MemoryPool()
                                       loop <- LoopState.Running(handle, wakeup, memory)
                                       handle.Init(libuv)
 
@@ -231,6 +230,10 @@ module Base =
                                       match machines.Count with
                                       | 0 -> 0
                                       | _ -> handle.Run()
+
+            | Closed ->               raise (NotImplementedException("Restarting dirty loops is not implemented"))
+
+            | Running(_, _, _) ->     0
 
     /// Build a loop with the given arguments.
     let loop c = Loop(c)
