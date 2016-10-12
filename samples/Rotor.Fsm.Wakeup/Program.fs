@@ -34,7 +34,7 @@ let main argv =
                                 l.addMachine (
                                     fun scope -> 
                                         notifier <- Some(scope.notifier())
-                                        new Machine<_>(50))
+                                        new Machine<_>(10))
                                 l |> run |> ignore)
 
     handle.Start()

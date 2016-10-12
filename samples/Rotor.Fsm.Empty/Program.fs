@@ -1,4 +1,4 @@
-open Rotor.Fsm
+open Rotor.Fsm.Base
 
 //The smallest loop you can have. Doesn't do much...
 [<EntryPoint>]

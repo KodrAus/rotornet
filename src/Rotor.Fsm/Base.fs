@@ -241,6 +241,8 @@ module Base =
                                                                  | _ -> match wakeup.dequeue with
                                                                         | true, token -> match (Map.tryFind token machines) with
                                                                                          | Some(fsm) -> match fsm.state with
+                                                                                                        //Wakeups may get called on Uninitialised machines
+                                                                                                        //We only run this check for wakeups
                                                                                                         | MachineState.Uninitialised -> create(token, fsm)
                                                                                                         | MachineState.Running -> ()
 
