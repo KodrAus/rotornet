@@ -110,15 +110,30 @@ module Base =
             member this.Dispose() = this.dispose ()
 
     /// An internal wrapper for all machine types
+    type private MachineState =
+    | Uninitialised
+    | Running
+
     [<Struct>]
-    type private Machine<'c>(m: IMachine<'c>, t: UvTimerHandle) =
-        member this.init l f =   t.Init(l, System.Action(f), null) |> ignore
-        member this.machine =    m
-        member this.timeout ms = t.Start(ms, 0UL)
+    type private Machine<'c> =
+        val m: IMachine<'c>
+        val t: UvTimerHandle
+        val mutable s: MachineState
+
+        new (m, t) = { m = m; s = MachineState.Uninitialised; t = t }
+
+        member this.init l f = this.t.Init(l, System.Action(f), null) |> ignore
+                               this.s <- MachineState.Running
+
+        member this.machine = this.m
+
+        member this.state = this.s
+
+        member this.timeout ms = this.t.Start(ms, 0UL)
 
         interface IDisposable with
-            member this.Dispose() = (m :> IDisposable).Dispose()
-                                    t.Dispose()
+            member this.Dispose() = (this.m :> IDisposable).Dispose()
+                                    this.t.Dispose()
 
     type private LoopState =
     | Idle of UvLoopHandle * WakeupHandle
@@ -215,6 +230,9 @@ module Base =
                                       loop <- LoopState.Running(handle, wakeup, memory)
                                       handle.Init(libuv)
 
+                                      let create(token: int64, fsm: Machine<'c>) = fsm.init handle (fun () -> runOnce token fsm fsm.machine.timeout)
+                                                                                   runOnce token fsm fsm.machine.create
+
                                       //Deqeue at most l items
                                       //This is to make sure other events this loop iteration get a chance to run
                                       let rec dequeueAtMost l =  match l with
@@ -222,7 +240,11 @@ module Base =
 
                                                                  | _ -> match wakeup.dequeue with
                                                                         | true, token -> match (Map.tryFind token machines) with
-                                                                                         | Some(fsm) -> runOnce token fsm fsm.machine.wakeup
+                                                                                         | Some(fsm) -> match fsm.state with
+                                                                                                        | MachineState.Uninitialised -> create(token, fsm)
+                                                                                                        | MachineState.Running -> ()
+
+                                                                                                        runOnce token fsm fsm.machine.wakeup
                                                                                          | _ -> ()
 
                                                                                          dequeueAtMost (l - 1)
@@ -239,8 +261,7 @@ module Base =
                                       wakeup.init handle handleWakeup
 
                                       //Initialise machines and timer callbacks
-                                      machines |> Map.iter(fun token fsm -> fsm.init handle (fun () -> runOnce token fsm fsm.machine.timeout)
-                                                                            runOnce token fsm fsm.machine.create)
+                                      machines |> Map.iter(fun token fsm -> create(token, fsm))
 
                                       match machines.Count with
                                       | 0 -> 0

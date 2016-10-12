@@ -14,6 +14,7 @@ type Machine<'c> (s) =
 
     //On wakeup, check state and go back to idling
     override this.wakeup c s =
+        printfn "waking up %i" state
         match state with
         | 0 ->              Done
 
@@ -33,7 +34,7 @@ let main argv =
                                 l.addMachine (
                                     fun scope -> 
                                         notifier <- Some(scope.notifier())
-                                        new Machine<_>(1000))
+                                        new Machine<_>(50))
                                 l |> run |> ignore)
 
     handle.Start()
@@ -45,7 +46,7 @@ let main argv =
     //If the loop was just built then the handle will fail
     let rec notify resp =
         match resp with
-        | Retry(retry) ->       Thread.Sleep(500)
+        | Retry(retry) ->       Thread.Sleep(1)
                                 notify (retry.wakeup())
                                 
         | _ ->                  ()
@@ -53,7 +54,7 @@ let main argv =
     //Send a few notifications to the loop
     //These notifications will continue to fire for a while after the loop stops.
     //In this case, the notifier returns a response of 'Closed' instead of 'Retry'.
-    for i in 0 .. 1000 do
+    for i in 0 .. 50 do
         notify (notifier.Value.wakeup())
         Thread.Sleep(50)
 
