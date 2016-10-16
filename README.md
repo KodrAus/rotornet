@@ -49,3 +49,8 @@ To run:
 ```sh
 cd samples && ./test.sh
 ```
+
+# What else is out there?
+
+If you did this idea, you should check out David Fowler's [Channels](https://github.com/davidfowl/Channels) library.
+It's a standardisation of some of the good work in Kestrel.
