@@ -16,7 +16,7 @@ events are possibly a different story.
 
 # The result
 
-There were some challenges with the .NET Core tooling not working very well with F# on Linux and I couldn't get any of the major test runners working. Besides that, there are a few significant points in this library that would need to be designed properly before it could be fleshed out further:
+There were some challenges with the .NET Core tooling not working very well with F# on Linux and I couldn't get any of the major test runners working. The code is also not very idiomatic F#. Besides that, there are a few significant points in this library that would need to be designed properly before it could be fleshed out further:
 
 - Managing concurrency
 - Managing memory
